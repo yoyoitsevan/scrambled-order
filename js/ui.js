@@ -464,6 +464,11 @@
   }
   function onNet(m) {
     switch (m.t) {
+      case '_auth':                         // password-gated server (private app): ask once, then connect
+        $('keyMsg').textContent = m.reason === 'denied' ? 'That password did not work. Try again.' : 'This private game server needs the password.';
+        lobbyMsg(m.reason === 'denied' ? 'Wrong password.' : 'Enter the password to play online.');
+        closeModals(); $('keyInput').value = ''; $('keyModal').hidden = false;
+        setTimeout(function () { try { $('keyInput').focus(); } catch (e) {} }, 50); break;
       case '_status':
         if (m.status === 'closed' && room) { lobbyMsg('Connection lost - reconnecting...'); if (stage.dataset.screen === 'play') setFeedback('RECONNECTING...', 'time'); }
         if (m.status === 'connecting' && !room) setTimeout(function () {   // hosted servers can be asleep
@@ -555,6 +560,10 @@
     $('btnCopy').addEventListener('click', function () {
       var l = $('roomLink').dataset.link; try { navigator.clipboard.writeText(l); $('btnCopy').textContent = 'COPIED!'; } catch (e) {}
       setTimeout(function () { $('btnCopy').textContent = 'COPY LINK'; }, 1500);
+    });
+    $('keyForm').addEventListener('submit', function (e) {
+      e.preventDefault(); var pw = $('keyInput').value; if (!pw) return;
+      N.Net.setPassword(pw).then(function () { $('keyInput').value = ''; closeModals(); lobbyMsg(''); ensureNet().connect(); });
     });
     $('chatForm').addEventListener('submit', function (e) { e.preventDefault(); var t = $('chatInput').value.trim(); if (t && net) net.send({ t: 'chat', text: t }); $('chatInput').value = ''; });
     // the typebox is always the active place during play

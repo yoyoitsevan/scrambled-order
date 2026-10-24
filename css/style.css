@@ -236,6 +236,8 @@ button { font-family: inherit; cursor: pointer; }
 .modal .set input[type=checkbox] { width: 20px; height: 20px; }
 .modal .set select, .modal .set input:not([type]) { margin-left: auto; font: bold 15px "Trebuchet MS", sans-serif; padding: 3px 6px; border-radius: 6px; border: 2px solid #ffd400; }
 .modal .sub { margin: 0 0 8px; color: #c9d4ff; font-size: 13px; }
+#keyInput { font: bold 20px "Trebuchet MS", sans-serif; padding: 6px 10px; border: 3px solid #ffd400; border-radius: 6px; width: 80%; box-sizing: border-box; text-align: center; margin: 4px 0 12px; }
+#keyForm .row { display: flex; justify-content: center; align-items: center; gap: 12px; }
 #scoreTable { list-style: none; padding: 0; margin: 0 0 12px; }
 #scoreTable li { display: flex; gap: 10px; font-weight: 800; padding: 3px 10px; border-bottom: 1px solid #ffffff22; }
 #scoreTable .tt { flex: 1; text-align: left; color: #7dff7d; font-size: 13px; } #scoreTable .dt { color: #c9d4ff; font-size: 12px; } #scoreTable .none { justify-content: center; color: #c9d4ff; }

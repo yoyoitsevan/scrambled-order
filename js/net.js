@@ -11,8 +11,74 @@
     try { this.session = JSON.parse(sessionStorage.getItem('ooo.session') || 'null'); } catch (e) {}
   }
   // Inside the iOS/Android app (Capacitor) the page is served from the device, so multiplayer talks to
-  // the hosted server. In a browser it stays same-origin. window.OOO_SERVER overrides both (testing).
-  var APP_WS = 'wss://scrambled-order.onrender.com/ws', APP_WEB = 'https://scrambled-order.onrender.com/';
+  // the hosted server named by the build profile (js/profile.js: appServer/appWeb). In a browser it stays
+  // same-origin. window.OOO_SERVER overrides both (testing).
+  var PROF = window.OOO_PROFILE || {};
+  var APP_WS = PROF.appServer || 'wss://scrambled-order.onrender.com/ws', APP_WEB = PROF.appWeb || 'https://scrambled-order.onrender.com/';
+  // Password-gated servers (profile appKey: "<label>"): the app asks for the password once and keeps only
+  // HMAC-SHA256(password, label), sent as a websocket subprotocol ("ooo", "k<hex>"); the server answers
+  // close code 4401 if it is wrong. Browsers keep using the site's normal login. The public profile has
+  // no appKey, so the public app never asks.
+  var KEY_STORE = 'ooo.appKey', KEY_LABEL = typeof PROF.appKey === 'string' ? PROF.appKey : 'ooo-app-v1';
+  Net.needsKey = function () { return !!PROF.appKey && (Net.isApp() || !!window.OOO_SERVER); };
+  Net.getKey = function () { try { return localStorage.getItem(KEY_STORE) || ''; } catch (e) { return ''; } };
+  Net.clearKey = function () { try { localStorage.removeItem(KEY_STORE); } catch (e) {} };
+  Net.setPassword = function (pw) {
+    return hmacHex(String(pw), KEY_LABEL).then(function (hex) { try { localStorage.setItem(KEY_STORE, hex); } catch (e) {} return hex; });
+  };
+  function hmacHex(key, msg) {
+    var enc = function (t) { return new TextEncoder().encode(t); };
+    var C = window.crypto && window.crypto.subtle;
+    if (C && window.isSecureContext !== false) {
+      return C.importKey('raw', enc(key), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
+        .then(function (k) { return C.sign('HMAC', k, enc(msg)); }).then(toHex)
+        .catch(function () { return toHex(hmacSha256(enc(key), enc(msg))); });
+    }
+    return Promise.resolve(toHex(hmacSha256(enc(key), enc(msg))));
+  }
+  function toHex(buf) { return Array.prototype.map.call(new Uint8Array(buf), function (b) { return (b < 16 ? '0' : '') + b.toString(16); }).join(''); }
+  // small SHA-256 / HMAC fallback for web views without crypto.subtle
+  function sha256(bytes) {
+    var K = [0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,
+      0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+      0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,
+      0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+      0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,
+      0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2];
+    var H = [0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19];
+    var l = bytes.length, n = ((l + 9 + 63) >> 6) << 6, m = new Uint8Array(n), W = new Array(64), i, j;
+    m.set(bytes); m[l] = 0x80; var bits = l * 8;
+    for (i = 0; i < 4; i++) m[n - 1 - i] = (bits >>> (8 * i)) & 255;
+    m[n - 5] = Math.floor(bits / 4294967296) & 255;
+    var r = function (x, c) { return (x >>> c) | (x << (32 - c)); };
+    for (j = 0; j < n; j += 64) {
+      for (i = 0; i < 16; i++) W[i] = (m[j + 4 * i] << 24) | (m[j + 4 * i + 1] << 16) | (m[j + 4 * i + 2] << 8) | m[j + 4 * i + 3];
+      for (i = 16; i < 64; i++) {
+        var s0 = r(W[i - 15], 7) ^ r(W[i - 15], 18) ^ (W[i - 15] >>> 3), s1 = r(W[i - 2], 17) ^ r(W[i - 2], 19) ^ (W[i - 2] >>> 10);
+        W[i] = (W[i - 16] + s0 + W[i - 7] + s1) | 0;
+      }
+      var a = H[0], b = H[1], c = H[2], d = H[3], e = H[4], f = H[5], g = H[6], h = H[7];
+      for (i = 0; i < 64; i++) {
+        var t1 = (h + (r(e, 6) ^ r(e, 11) ^ r(e, 25)) + ((e & f) ^ (~e & g)) + K[i] + W[i]) | 0;
+        var t2 = ((r(a, 2) ^ r(a, 13) ^ r(a, 22)) + ((a & b) ^ (a & c) ^ (b & c))) | 0;
+        h = g; g = f; f = e; e = (d + t1) | 0; d = c; c = b; b = a; a = (t1 + t2) | 0;
+      }
+      H[0] = (H[0] + a) | 0; H[1] = (H[1] + b) | 0; H[2] = (H[2] + c) | 0; H[3] = (H[3] + d) | 0;
+      H[4] = (H[4] + e) | 0; H[5] = (H[5] + f) | 0; H[6] = (H[6] + g) | 0; H[7] = (H[7] + h) | 0;
+    }
+    var out = new Uint8Array(32);
+    for (i = 0; i < 8; i++) { out[4 * i] = H[i] >>> 24; out[4 * i + 1] = (H[i] >>> 16) & 255; out[4 * i + 2] = (H[i] >>> 8) & 255; out[4 * i + 3] = H[i] & 255; }
+    return out;
+  }
+  function hmacSha256(key, msg) {
+    if (key.length > 64) key = sha256(key);
+    var k = new Uint8Array(64), i; k.set(key);
+    var ip = new Uint8Array(64 + msg.length), op = new Uint8Array(96);
+    for (i = 0; i < 64; i++) { ip[i] = k[i] ^ 0x36; op[i] = k[i] ^ 0x5c; }
+    ip.set(msg, 64); op.set(sha256(ip), 64);
+    return sha256(op);
+  }
+  Net._hmacSha256 = hmacSha256;   // exposed for tests
   Net.isApp = function () { var C = window.Capacitor; return !!(C && typeof C.isNativePlatform === 'function' && C.isNativePlatform()); };
   Net.remote = function () { return window.OOO_SERVER || (Net.isApp() ? APP_WS : null); };
   Net.available = function () { return 'WebSocket' in window && (!!Net.remote() || /^https?:$/.test(location.protocol)); };
@@ -26,8 +92,10 @@
   Net.prototype.connect = function () {
     var self = this;
     if (this.ws && (this.ws.readyState === 0 || this.ws.readyState === 1)) return;
+    var key = Net.needsKey() ? Net.getKey() : '';
+    if (Net.needsKey() && !key) { this.status = 'auth'; this._emit({ t: '_auth', reason: 'missing' }); return; }
     this.closedByUser = false; this.status = 'connecting'; this._emit({ t: '_status', status: 'connecting' });
-    var ws = this.ws = new WebSocket(this.url());
+    var ws = this.ws = key ? new WebSocket(this.url(), ['ooo', 'k' + key]) : new WebSocket(this.url());
     ws.onopen = function () {
       self.retry = 0; self.status = 'open'; self._emit({ t: '_status', status: 'open' }); self.ping();
       if (self.session && self.session.token && self.wantRejoin) ws.send(JSON.stringify({ t: 'join', code: self.session.code, token: self.session.token, name: self.session.name }));
@@ -43,7 +111,10 @@
       if (m.t === 'error' && m.code === 'noroom') self.forget();
       self._emit(m);
     };
-    ws.onclose = function () {
+    ws.onclose = function (ev) {
+      if (ev && ev.code === 4401) {   // wrong or changed password: ask again, no reconnect loop
+        Net.clearKey(); self.status = 'auth'; self._emit({ t: '_auth', reason: 'denied' }); return;
+      }
       self.status = 'closed'; self._emit({ t: '_status', status: 'closed' });
       if (self.closedByUser) return;
       var wait = Math.min(8000, 500 * Math.pow(2, self.retry++));

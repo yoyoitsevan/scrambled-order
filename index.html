@@ -132,6 +132,11 @@
       <label class="set">Nickname <input id="setNick" maxlength="16"></label>
       <button class="bigbtn small" data-close>DONE</button></div></div>
 
+    <div id="keyModal" class="modal" hidden><div class="card">
+      <h2>PASSWORD</h2><p class="sub" id="keyMsg">This private game server needs the password.</p>
+      <form id="keyForm" autocomplete="off"><input id="keyInput" type="password" maxlength="200" autocomplete="current-password" aria-label="Password">
+        <div class="row"><button type="submit" class="bigbtn small">PLAY ONLINE</button> <button type="button" class="chip" data-close>CANCEL</button></div></form></div></div>
+
     <div id="scoresModal" class="modal" hidden><div class="card">
       <h2>HIGH SCORES</h2><p class="sub">Solo games on this device</p>
       <ol id="scoreTable"></ol>
