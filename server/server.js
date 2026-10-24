@@ -47,10 +47,20 @@ function createServer(opts = {}) {
     }, opts.emptyRoomMs || 120000);
   }
 
-  wss.on('connection', (ws) => {
+  wss.on('connection', (ws, req) => {
     let room = null, me = null;
+    try { (req && req.socket || ws._socket).setNoDelay(true); } catch (e) {}   // small messages go out at once (ws does this too)
     const send = (m) => { if (ws.readyState === 1) ws.send(JSON.stringify(m)); };
-    ws.isAlive = true; ws.on('pong', () => { ws.isAlive = true; });
+    // protocol-level pings (answered by the browser's network stack) measure each player's round trip
+    ws.missed = 0; ws.rtts = [];
+    ws.on('pong', () => {
+      ws.missed = 0; if (!ws.pingAt) return;
+      const ms = Date.now() - ws.pingAt; ws.pingAt = 0;
+      ws.rtts.push(ms); if (ws.rtts.length > 9) ws.rtts.shift();
+      if (room && me) { if (ws.owner !== me) { ws.owner = me; ws.rtts.forEach(x => room.noteRtt(me, x)); } else room.noteRtt(me, ms); }
+    });
+    const probe = () => { if (ws.readyState === 1 && !ws.pingAt) { ws.pingAt = Date.now(); try { ws.ping(); } catch (e) {} } };
+    probe(); setTimeout(probe, 1500);   // first RTT samples right away, before the 5 s heartbeat
     ws.on('message', (raw) => {
       let m; try { m = JSON.parse(raw); } catch (e) { return; }
       if (!m || typeof m.t !== 'string') return;
@@ -78,7 +88,7 @@ function createServer(opts = {}) {
       switch (m.t) {
         case 'chat': room.say(me, m.text); break;
         case 'start': { const err = room.start(me); if (err) send({ t: 'error', msg: err }); break; }
-        case 'letters': room.letters(me, String(m.s || '')); break;
+        case 'letters': room.letters(me, String(m.s || ''), Number(m.at)); break;
         case 'bs': room.backspace(me); break;
         case 'back': room.backToLobby(me); break;
         case 'leave': room.remove(me); me = null; room = null; send({ t: 'left' }); break;
@@ -86,7 +96,11 @@ function createServer(opts = {}) {
     });
     ws.on('close', () => { if (room && me) room.disconnect(me); });
   });
-  const hb = setInterval(() => wss.clients.forEach(ws => { if (!ws.isAlive) return ws.terminate(); ws.isAlive = false; ws.ping(); }), 15000);
+  // every 5 s: RTT sample + keepalive (an open game keeps traffic flowing); drop a socket after 4 missed pongs
+  const hb = setInterval(() => wss.clients.forEach(ws => {
+    if (ws.missed >= 4) return ws.terminate();
+    ws.missed = (ws.missed || 0) + 1; ws.pingAt = Date.now(); try { ws.ping(); } catch (e) {}
+  }), opts.pingMs || 5000);
   server.on('close', () => { clearInterval(hb); rooms.forEach(r => r.destroy()); });
   return { app, server, wss, rooms };
 }

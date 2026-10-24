@@ -20,6 +20,55 @@ function client(port) {
 }
 const type = t => m => m.t === t;
 
+// Latency fairness, with a fake clock: a far player's typing is judged when it was typed (its `at`),
+// trusted only within its measured latency, capped; the puzzle goes out ahead with startsAt/endsAt.
+function latencyTests() {
+  const { Room, NET } = require('../server/room.js');
+  const E = require('../js/engine.js');
+  const data = require('../data/puzzles.json');
+  let T = 1e6; const out = { near: [], far: [] };
+  const room = new Room('LAGX', data, { now: () => T, rng: () => 0.42 });
+  const near = room.addPlayer('Near', m => out.near.push(m)).player, far = room.addPlayer('Far', m => out.far.push(m)).player;
+  for (let i = 0; i < 5; i++) { room.noteRtt(near, 20); room.noteRtt(far, 600); }   // far: 300 ms each way
+  assert.equal(room.oneWay(far), 300); assert.equal(room.allowance(far), Math.min(NET.capMs, 300 + NET.jitterMs));
+  room.start(near); clearTimeout(room.timer);
+  room.roundIntro(); clearTimeout(room.timer);
+  const lead = room.leadMs(room.t.roundIntroMs); assert.equal(lead, 450, 'puzzle sent one-way + pad ahead');
+  room.beginPuzzle(lead); clearTimeout(room.timer);
+  const pm = out.far.find(m => m.t === 'puzzle'); assert.equal(pm.startsAt, T + lead); assert.equal(pm.endsAt, pm.startsAt + pm.durationMs);
+  const pz = room.puzzle(), key = pz.targets[0].answer.slice(0, 3);
+  // both type the key 2 s after the reveal; near's message lands 10 ms later, far's 300 ms later
+  const typed = pm.startsAt + 2000;
+  T = typed + 10; room.letters(near, key, typed);
+  T = typed + 300; room.letters(far, key, typed);
+  const sn = out.near.find(m => m.t === 'solved'), sf = out.far.find(m => m.t === 'solved');
+  assert(sn && sf, 'both solved'); assert.equal(sf.points, sn.points, 'same points for the same typing moment');
+  const expect = E.pointsFor(pz.base, (pm.endsAt - typed) / pm.durationMs, room.cfg); assert.equal(sn.points, expect);
+  // a stamp claiming more than the allowance is clamped (no time travel), a stamp in the future is ignored
+  room.beginPuzzle(0); clearTimeout(room.timer); out.far.length = 0; out.near.length = 0;
+  const pz2 = room.puzzle(), k2 = pz2.targets[0].answer.slice(0, 3), st2 = room.startsAt, dur2 = pz2.seconds * 1000;
+  T = st2 + 5000; room.letters(far, k2, st2);                        // claims it typed at the very start
+  const cheat = out.far.find(m => m.t === 'solved');
+  assert.equal(cheat.points, E.pointsFor(pz2.base, (room.endsAt - (T - room.allowance(far))) / dur2, room.cfg), 'credit capped at the allowance');
+  T = st2 + 6000; room.letters(near, k2, T + 4000);                    // stamp from the future -> judged on arrival
+  const fut = out.near.find(m => m.t === 'solved');
+  assert.equal(fut.points, E.pointsFor(pz2.base, (room.endsAt - T) / dur2, room.cfg));
+  // after the buzzer: typed in time (still in flight) counts, typed late does not
+  room.beginPuzzle(0); clearTimeout(room.timer); out.far.length = 0; out.near.length = 0;
+  const k3 = room.puzzle().targets[0].answer.slice(0, 3);
+  T = room.endsAt + 250; room.letters(far, k3, room.endsAt - 40);
+  assert(out.far.find(m => m.t === 'solved'), 'typed 40 ms before the buzzer, arrived after: counts');
+  T = room.endsAt + 100; room.letters(near, k3, room.endsAt + 50);
+  assert(!out.near.find(m => m.t === 'solved' || m.t === 'wrong'), 'typed after the buzzer: ignored');
+  assert.equal(room.graceMs(), room.allowance(near) /* far is done */);
+  // no stamp (older client): judged at arrival minus the measured one-way latency, capped
+  room.beginPuzzle(0); clearTimeout(room.timer); out.far.length = 0;
+  const k4 = room.puzzle().targets[0].answer.slice(0, 3); T = room.startsAt + 3000; room.letters(far, k4, NaN);
+  assert.equal(out.far.find(m => m.t === 'solved').points, E.pointsFor(room.puzzle().base, (room.endsAt - (T - 300)) / (room.puzzle().seconds * 1000), room.cfg));
+  room.destroy();
+  console.log('ok  latency: same points for the same typing moment (far 300 ms), capped stamps, buzzer grace, startsAt lead');
+}
+
 (async () => {
   const { server, rooms } = createServer({ emptyRoomMs: 500 });
   await new Promise(r => server.listen(0, r));
@@ -103,6 +152,7 @@ const type = t => m => m.t === t;
   await new Promise(r => setTimeout(r, 900));
   assert(!rooms.has(code), 'empty room cleaned up');
   server.close();
+  latencyTests();
   console.log('server tests passed: 12 puzzles,', JSON.stringify(sawTimeOrDone), 'final', st.map(s => s.name + ' ' + s.score).join(', '));
   process.exit(0);
 })().catch(e => { console.error(e); process.exit(1); });

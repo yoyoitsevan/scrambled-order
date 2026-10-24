@@ -18,6 +18,7 @@ The title can be changed in `js/profile.js`, or with `GAME_TITLE="My Title" npm 
 ## Multiplayer (2–6 players)
 * **Rooms and lobby:** create a room to get a 4-letter code or share link (`/r/CODE`), set a nickname, and chat in the lobby. The host presses Start.
 * **Fair play:** the server owns the clock, checks every letter and keeps score. Answers are never sent before a word is solved.
+* **Same chances near or far:** every time is server time. Each puzzle is sent a moment ahead with its start and end time, so every player sees it at the same instant and runs the clock and the birds locally. Typing carries the (synced) moment it was typed, and the server scores it by that moment, trusting it only within that player's measured latency (median websocket round trip / 2 plus 120 ms, never more than 350 ms). The buzzer waits that long for typing still on its way. Clocks are synced NTP-style every 4 s, which also keeps the connection (and a free server) awake. `tools/e2e_lag.py` plays a game with one player behind a 400 ms each-way delay and checks both see the same puzzle moment, the same deadline and the same points.
 * **Standings:** live standings show between puzzles, with final standings and dancing letter-tile mascots at the end.
 * **Connections:** if you drop or reload, you rejoin your seat. If the host leaves, the host role passes to another player.
 
@@ -42,6 +43,7 @@ The `mobile/` folder wraps this same client as native apps with Capacitor (app i
   * `python tools/e2e.py http://localhost:8080/`: desktop solo.
   * `python tools/e2e_mobile.py`: phone, offline.
   * `python tools/e2e_multi.py http://localhost:8080`: 3 browsers, one room, full game.
+  * `EXPECT_FAIR=1 python tools/e2e_lag.py http://localhost:8080 400`: a near and a far (400 ms each way) player, same timer and points.
 * `python tools/measure_audio.py`: prints sound levels for normalization.
 * Art source: `python3 tools/make_art.py` regenerates `assets/svg/`.
 

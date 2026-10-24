@@ -4,6 +4,13 @@
  * object only needs send(msg). The server owns the puzzles, the clock, validation and scoring;
  * clients never see an answer before they solve it (or the puzzle ends).
  * Uses the same engine as solo play (js/engine.js): buildPuzzles, PuzzleState, pointsFor.
+ *
+ * Latency fairness: every timestamp is server time. A puzzle is sent a moment ahead with startsAt/endsAt,
+ * so every client shows it (and runs its own clock and birds) at the same instant whatever its latency.
+ * Typing is judged at the moment it was typed, not when it arrived: the client stamps each message with
+ * its synced server time (`at`), accepted up to that player's measured one-way latency (median websocket
+ * RTT / 2) plus a jitter allowance, never more than NET.capMs. Without a stamp, the measured one-way
+ * latency is used. The buzzer waits the same allowance for typing still in flight.
  */
 const crypto = require('crypto');
 const E = require('../js/engine.js');
@@ -12,6 +19,9 @@ const MAX_PLAYERS = 6, MIN_PLAYERS = 2;
 const TIMING = { countdownMs: 5000, roundIntroMs: 2800, revealMs: 4500, lobbyGraceMs: 30000 };
 const FAST = { countdownMs: 1200, roundIntroMs: 600, revealMs: 1200, lobbyGraceMs: 30000 };
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+// capMs: most a player can be credited for latency; jitterMs: extra allowance over the median one-way
+// latency; lead*: how far ahead of time a puzzle is sent (covers the slowest player's one-way latency)
+const NET = { capMs: 350, jitterMs: 120, leadMinMs: 200, leadMaxMs: 600, leadPadMs: 150 };
 
 function newId() { return crypto.randomBytes(6).toString('hex'); }
 function cleanName(s) { return String(s || '').replace(/[^\w .'!-]/g, '').trim().slice(0, 16) || 'Player'; }
@@ -37,7 +47,7 @@ class Room {
     const taken = () => [...this.players.values()].some(p => p.name.toLowerCase() === nm.toLowerCase());
     while (taken()) nm = cleanName(name).slice(0, 13) + ' ' + k++;
     const p = { id: newId(), token: newId() + newId(), name: nm, send, connected: true, score: 0, attempt: null,
-                status: 'idle', puzzlePts: 0, lastPts: 0, prevRank: 0, dropTimer: null };
+                status: 'idle', puzzlePts: 0, lastPts: 0, prevRank: 0, dropTimer: null, rtts: [], judgedAt: 0 };
     this.players.set(p.id, p); this.order.push(p.id);
     if (!this.hostId) this.hostId = p.id;
     this.system(p.name + ' joined.');
@@ -81,6 +91,20 @@ class Room {
   connected() { return [...this.players.values()].filter(p => p.connected); }
   checkEmpty() { if (!this.connected().length) this.onEmpty(this); }
 
+  // ---------- latency ----------
+  /** A websocket round-trip sample for player p (server/server.js measures protocol pings). */
+  noteRtt(p, ms) {
+    if (!p || !(ms >= 0 && ms < 20000)) return;
+    p.rtts.push(ms); if (p.rtts.length > 9) p.rtts.shift();
+  }
+  oneWay(p) { const a = (p.rtts || []).slice().sort((x, y) => x - y); return a.length ? a[a.length >> 1] / 2 : 0; }
+  allowance(p) { return Math.min(NET.capMs, Math.round(this.oneWay(p) + NET.jitterMs)); }
+  leadMs(budget) {     // send the next puzzle this far ahead (bounded by the pause before it)
+    const ow = Math.max(0, ...this.connected().map(p => this.oneWay(p)));
+    return Math.max(0, Math.min(Math.floor(budget / 2), NET.leadMaxMs, Math.max(NET.leadMinMs, Math.round(ow + NET.leadPadMs))));
+  }
+  graceMs() { return Math.max(0, ...this.connected().filter(p => p.status === 'playing').map(p => this.allowance(p))); }
+
   // ---------- messaging ----------
   broadcast(msg) { for (const p of this.players.values()) if (p.connected) p.send(msg); }
   system(text) { this.pushChat({ from: null, text, ts: this.now() }); }
@@ -104,7 +128,7 @@ class Room {
       s.round = { round: r.round, title: r.title, category: r.category, instruction: r.instruction, count: r.puzzles.length };
       s.puzzleIndex = this.puzzleIdx;
       if (this.state === 'playing') {
-        s.puzzle = E.publicPuzzle(this.puzzle()); s.endsAt = this.endsAt; s.durationMs = this.puzzle().seconds * 1000;
+        s.puzzle = E.publicPuzzle(this.puzzle()); s.startsAt = this.startsAt; s.endsAt = this.endsAt; s.durationMs = this.puzzle().seconds * 1000;
         if (p && p.attempt) { s.mine = { status: p.status, buffer: p.attempt.buffer, solved: this.puzzle().targets.filter(t => p.attempt.solved[t.id]).map(t => ({ id: t.id, answer: t.answer })) }; }
       }
       if (this.state === 'finished') s.standings = this.standings();
@@ -134,30 +158,43 @@ class Room {
     const r = this.rounds[this.roundIdx];
     this.state = 'intro';
     this.broadcast({ t: 'roundIntro', round: r.round, title: r.title, category: r.category, instruction: r.instruction });
-    this.later(() => this.beginPuzzle(), this.t.roundIntroMs);
+    const lead = this.leadMs(this.t.roundIntroMs);
+    this.later(() => this.beginPuzzle(lead), this.t.roundIntroMs - lead);
   }
-  beginPuzzle() {
+  // The puzzle goes out `lead` ms early with its start/end times: every client reveals it at startsAt.
+  beginPuzzle(lead) {
     const pz = this.puzzle(), r = this.rounds[this.roundIdx];
     this.state = 'playing';
-    const dur = pz.seconds * 1000;
-    this.endsAt = this.now() + dur; this.puzzleStart = this.now();
+    const dur = pz.seconds * 1000, now = this.now();
+    lead = Math.max(0, lead || 0);
+    this.startsAt = now + lead; this.endsAt = this.startsAt + dur; this.puzzleStart = this.startsAt;
     for (const p of this.players.values()) {
-      p.attempt = new E.PuzzleState(pz); p.status = 'playing'; p.puzzlePts = 0;
+      p.attempt = new E.PuzzleState(pz); p.status = 'playing'; p.puzzlePts = 0; p.judgedAt = 0;
       p.puzzle = () => pz;
     }
     this.broadcast({ t: 'puzzle', round: { round: r.round, title: r.title, category: r.category, instruction: r.instruction, count: r.puzzles.length },
-      index: this.puzzleIdx, puzzle: E.publicPuzzle(pz), durationMs: dur, endsAt: this.endsAt, serverNow: this.now() });
+      index: this.puzzleIdx, puzzle: E.publicPuzzle(pz), durationMs: dur, startsAt: this.startsAt, endsAt: this.endsAt, serverNow: now });
     this.broadcastProgress();
-    this.later(() => this.endPuzzle('time'), dur);
+    // at the buzzer, wait for typing still on its way from far-away players, then end the puzzle
+    this.later(() => this.later(() => this.endPuzzle('time'), this.graceMs()), lead + dur);
   }
-  letters(p, s) {
+  /** Server time at which p typed this message: its stamp `at`, trusted only within p's latency allowance. */
+  judgedTime(p, at) {
+    const now = this.now();
+    const lead = Number.isFinite(at) ? Math.max(0, Math.min(now - at, this.allowance(p))) : Math.min(NET.capMs, this.oneWay(p));
+    return Math.max(now - lead, this.startsAt || 0, p.judgedAt || 0);
+  }
+  letters(p, s, at) {
     if (this.state !== 'playing' || !p.attempt || p.status !== 'playing') return;
     const pz = this.puzzle();
+    const tj = this.judgedTime(p, at);
+    if (tj > this.endsAt) return;                 // typed after the buzzer
+    p.judgedAt = tj;
     const letters = E.normalize(s).slice(0, 60);
     for (const c of letters) {
       const r = p.attempt.feedLetter(c);
       if (!r || r.ignored) continue;
-      const frac = Math.max(0, (this.endsAt - this.now()) / (pz.seconds * 1000));
+      const frac = Math.max(0, Math.min(1, (this.endsAt - tj) / (pz.seconds * 1000)));
       if (r.ok) {
         const pts = E.pointsFor(pz.base, frac, this.cfg);
         p.score += pts; p.puzzlePts += pts;
@@ -197,11 +234,13 @@ class Room {
     this.broadcast({ t: 'puzzleEnd', reason, answers: pz.targets.map(t => ({ id: t.id, answer: t.answer })), results, standings: st,
                      revealMs: this.t.revealMs, last });
     st.forEach(s => { const p = this.players.get(s.id); if (p) p.prevRank = s.rank; });
-    this.later(() => this.next(), this.t.revealMs);
+    const r = this.rounds[this.roundIdx], more = this.puzzleIdx + 1 < r.puzzles.length;
+    const lead = more ? this.leadMs(this.t.revealMs) : 0;
+    this.later(() => this.next(lead), this.t.revealMs - lead);
   }
-  next() {
+  next(lead) {
     const r = this.rounds[this.roundIdx];
-    if (this.puzzleIdx + 1 < r.puzzles.length) { this.puzzleIdx++; this.beginPuzzle(); return; }
+    if (this.puzzleIdx + 1 < r.puzzles.length) { this.puzzleIdx++; this.beginPuzzle(lead); return; }
     if (this.roundIdx + 1 < this.rounds.length) { this.roundIdx++; this.puzzleIdx = 0; this.roundIntro(); return; }
     this.state = 'finished';
     const max = E.maxScoreOf(this.rounds, this.cfg);
@@ -220,4 +259,4 @@ class Room {
   destroy() { clearTimeout(this.timer); for (const p of this.players.values()) clearTimeout(p.dropTimer); }
 }
 
-module.exports = { Room, cleanName, CODE_CHARS, MAX_PLAYERS, MIN_PLAYERS };
+module.exports = { Room, cleanName, CODE_CHARS, MAX_PLAYERS, MIN_PLAYERS, NET };

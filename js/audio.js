@@ -15,7 +15,7 @@
   function actx() {
     if (!ctx) {
       var C = window.AudioContext || window.webkitAudioContext; if (!C) return null;
-      ctx = new C(); master = chain(ctx, ctx.destination);
+      ctx = new C(); master = chain(ctx, ctx.destination); decodeAll();
     }
     if (ctx.state === 'suspended') ctx.resume();
     return ctx;
@@ -98,16 +98,49 @@
   };
 
   // ---------- sample playback (classic profile only) ----------
-  var cache = {}, themeEl = null;
-  function sample(name) {
-    if (!SAMPLES || !SAMPLES.files[name]) return null;
-    if (!cache[name]) { var a = new Audio(SAMPLES.base + SAMPLES.files[name]); a.preload = 'auto'; cache[name] = a; }
-    return cache[name];
+  // Each file is downloaded ONCE (fetch -> ArrayBuffer, right after the page loads), decoded once into
+  // an AudioBuffer and then played from memory with Web Audio: no network request and no new media
+  // element per sound (that used to re-download type.wav on every keystroke on slow phones).
+  // Fallback (no Web Audio / fetch blocked): a small reusable pool of <audio> elements per sound.
+  var bufs = {}, raw = {}, loading = {}, pool = {}, themeEl = null, themeSrc = null;
+  function vol(name) { return (SAMPLES.volume || {})[name] != null ? SAMPLES.volume[name] : 0.9; }
+  function hasSample(name) { return !!(SAMPLES && SAMPLES.files[name]); }
+  function preload() {
+    if (!SAMPLES || !window.fetch) return;
+    var names = Object.keys(SAMPLES.files).sort(function (a, b) { return (a === 'theme') - (b === 'theme'); });   // the long theme last
+    (function next(i) {
+      if (i >= names.length) return;
+      var n = names[i]; if (loading[n]) return next(i + 1);
+      loading[n] = fetch(SAMPLES.base + SAMPLES.files[n], { credentials: 'same-origin' })
+        .then(function (r) { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); })
+        .then(function (ab) { raw[n] = ab; decode(n); }, function () { loading[n] = 'failed'; })
+        .then(function () { next(i + 1); });
+    })(0);
+  }
+  function decode(name) {
+    if (!ctx || !raw[name] || bufs[name]) return;
+    var ab = raw[name]; raw[name] = null;
+    var ok = function (b) { bufs[name] = b; }, bad = function () { loading[name] = 'failed'; };
+    try { var pr = ctx.decodeAudioData(ab, ok, bad); if (pr && pr.catch) pr.catch(bad); } catch (e) { bad(); }
+  }
+  function decodeAll() { Object.keys(raw).forEach(decode); }
+  function element(name) {             // fallback: reuse up to 3 elements per sound instead of cloning per play
+    var list = pool[name] || (pool[name] = []);
+    for (var i = 0; i < list.length; i++) if (list[i].paused || list[i].ended) return list[i];
+    if (list.length >= 3) return list[0];
+    var a = new Audio(SAMPLES.base + SAMPLES.files[name]); a.preload = 'auto'; list.push(a); return a;
   }
   function playSample(name, rate) {
-    var a = sample(name); if (!a) return false;
-    try { a = a.cloneNode(); a.volume = (SAMPLES.volume || {})[name] != null ? SAMPLES.volume[name] : 0.9;
-          if (rate) { a.playbackRate = rate; if ('preservesPitch' in a) a.preservesPitch = false; }
+    if (!hasSample(name)) return false;
+    var c = ctx, b = bufs[name];
+    if (c && b) {
+      if (c.state === 'suspended') c.resume();
+      try { var src = c.createBufferSource(), g = c.createGain(); src.buffer = b; if (rate) src.playbackRate.value = rate;
+            g.gain.value = vol(name); src.connect(g); g.connect(c.destination); src.start(); return src; } catch (e) { return true; }
+    }
+    if (loading[name] && loading[name] !== 'failed' && c) return true;   // still downloading: skip rather than download twice
+    try { var a = element(name); a.volume = vol(name); a.currentTime = 0;
+          if (rate) { a.playbackRate = rate; if ('preservesPitch' in a) a.preservesPitch = false; } else a.playbackRate = 1;
           var p = a.play(); if (p && p.catch) p.catch(function () {}); } catch (e) {}
     return true;
   }
@@ -151,15 +184,22 @@
   }
   function themeStart() {
     if (muted) return;
-    var a = sample('theme');
-    if (a) { try { themeEl = themeEl || a.cloneNode(); themeEl.volume = (SAMPLES.volume || {}).theme || 0.55; themeEl.currentTime = 0; var p = themeEl.play(); if (p && p.catch) p.catch(function () {}); } catch (e) {} return; }
+    if (hasSample('theme')) {
+      themeStop(); var v = (SAMPLES.volume || {}).theme || 0.55;
+      if (ctx && bufs.theme) { var s = playSample('theme'); if (s && s.connect) themeSrc = s; return; }
+      if (loading.theme && loading.theme !== 'failed' && ctx) return;   // not downloaded yet: no theme this time
+      try { themeEl = themeEl || new Audio(SAMPLES.base + SAMPLES.files.theme); themeEl.volume = v; themeEl.currentTime = 0; var p = themeEl.play(); if (p && p.catch) p.catch(function () {}); } catch (e) {}
+      return;
+    }
     themeStop(); themeBus = synth('theme');
   }
   function themeStop() {
     try { if (themeEl) themeEl.pause(); } catch (e) {}
+    try { if (themeSrc) themeSrc.stop(); } catch (e) {} themeSrc = null;
     if (themeBus && ctx) { try { themeBus.gain.setTargetAtTime(0, ctx.currentTime, 0.05); var b = themeBus; setTimeout(function () { b.disconnect(); }, 400); } catch (e) {} themeBus = null; }
   }
-  function unlock() { if (SAMPLES) Object.keys(SAMPLES.files).forEach(sample); actx(); }
+  function unlock() { actx(); preload(); }
+  if (SAMPLES) { if (document.readyState === 'complete') setTimeout(preload, 0); else window.addEventListener('load', function () { setTimeout(preload, 0); }); }
   function setMuted(m) { muted = !!m; try { localStorage.setItem('ooo.mute', muted ? '1' : '0'); } catch (e) {} if (muted) themeStop(); }
   // Offline render of one voice (used by tools/measure_audio.py to normalize levels).
   function measure(name) {
@@ -171,6 +211,6 @@
       return { name: name, dur: dur, peak: pk, rms: Math.sqrt(ss / n) };
     });
   }
-  window.OOOAudio = { counts: counts, whistle: whistle, tickTock: tickTock, play: play, themeStart: themeStart, themeStop: themeStop, unlock: unlock,
+  window.OOOAudio = { counts: counts, loaded: function () { return Object.keys(bufs); }, whistle: whistle, tickTock: tickTock, play: play, themeStart: themeStart, themeStop: themeStop, unlock: unlock,
                       setMuted: setMuted, isMuted: function () { return muted; }, voices: Object.keys(V), measure: measure, LEVEL: LEVEL };
 })();

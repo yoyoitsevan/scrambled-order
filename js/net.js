@@ -1,6 +1,10 @@
 /* Scrambled Order - multiplayer client: a reconnecting WebSocket plus RemoteGame,
    an adapter that looks like the solo engine's Game to the UI (same events), but the server
-   owns the clock, validates every letter and keeps the score. */
+   owns the clock, validates every letter and keeps the score.
+   Latency: the client keeps its clock synced to the server's (NTP-style pings, best of the last few
+   round trips). The server sends each puzzle with startsAt/endsAt, so every player reveals it at the
+   same moment and counts down locally; typed letters carry their synced time so the server can judge
+   them by when they were typed (within the player's measured latency). */
 (function () {
   'use strict';
   var E = window.OOOEngine;
@@ -8,6 +12,7 @@
   function Net() {
     this.ws = null; this.handlers = []; this.queue = []; this.offset = 0; this.closedByUser = false;
     this.retry = 0; this.session = null; this.status = 'idle';
+    this.synced = false; this.samples = []; this.rtt = 0; this._pid = 0; this._pings = {}; this._pingTimer = null;
     try { this.session = JSON.parse(sessionStorage.getItem('ooo.session') || 'null'); } catch (e) {}
   }
   // Inside the iOS/Android app (Capacitor) the page is served from the device, so multiplayer talks to
@@ -97,7 +102,9 @@
     this.closedByUser = false; this.status = 'connecting'; this._emit({ t: '_status', status: 'connecting' });
     var ws = this.ws = key ? new WebSocket(this.url(), ['ooo', 'k' + key]) : new WebSocket(this.url());
     ws.onopen = function () {
-      self.retry = 0; self.status = 'open'; self._emit({ t: '_status', status: 'open' }); self.ping();
+      self.retry = 0; self.status = 'open'; self._emit({ t: '_status', status: 'open' });
+      self.ping(); setTimeout(function () { self.ping(); }, 400); setTimeout(function () { self.ping(); }, 1200);
+      clearInterval(self._pingTimer); self._pingTimer = setInterval(function () { self.ping(); }, 4000);   // clock sync + keepalive
       if (self.session && self.session.token && self.wantRejoin) ws.send(JSON.stringify({ t: 'join', code: self.session.code, token: self.session.token, name: self.session.name }));
       var q = self.queue; self.queue = []; q.forEach(function (m) { ws.send(JSON.stringify(m)); });
       self.unconfirmed = key ? q : null;   // kept until the server answers, so a refused password doesn't drop them
@@ -107,8 +114,8 @@
       var m; try { m = JSON.parse(ev.data); } catch (e) { return; }
       if (m.t === 'auth' && !m.ok) { self.denied = true; return; }   // the server refused the app password
       self.unconfirmed = null; self.heard = true;
-      if (m.serverNow) self.offset = self.offset * 0.7 + (m.serverNow - Date.now()) * 0.3;
-      if (m.t === 'pong' && self._pingAt) { var rtt = Date.now() - self._pingAt; self.offset = m.serverNow + rtt / 2 - Date.now(); }
+      if (m.t === 'pong') { self._pong(m); return; }
+      if (m.serverNow && !self.synced) self.offset = m.serverNow - Date.now();   // rough, until the first pong
       if (m.t === 'joined') { self.session = { code: m.room.code, token: m.you.token, id: m.you.id, name: self.lastName };
         try { sessionStorage.setItem('ooo.session', JSON.stringify(self.session)); } catch (e) {} self.wantRejoin = true; }
       if (m.t === 'left') self.forget();
@@ -119,7 +126,7 @@
       // wrong or changed password: ask again, no reconnect loop. Proxies can drop the 4401 close frame, so an
       // app-key socket that opened and closed without one server message (not even the pong) counts too.
       var refused = (ev && ev.code === 4401) || self.denied || (key && self.opened && !self.heard && !self.closedByUser);
-      self.opened = false; self.denied = false;
+      self.opened = false; self.denied = false; clearInterval(self._pingTimer); self._pings = {};
       if (refused) {
         self.queue = (self.unconfirmed || []).concat(self.queue); self.unconfirmed = null;
         Net.clearKey(); self.status = 'auth'; self._emit({ t: '_auth', reason: 'denied' }); return;
@@ -133,10 +140,23 @@
   Net.prototype.send = function (m) {
     if (this.ws && this.ws.readyState === 1) this.ws.send(JSON.stringify(m)); else { this.queue.push(m); this.connect(); }
   };
-  Net.prototype.ping = function () { this._pingAt = Date.now(); this.send({ t: 'ping' }); };
+  Net.prototype.ping = function () {
+    if (!this.ws || this.ws.readyState !== 1) return;
+    var id = ++this._pid; this._pings[id] = Date.now(); this.ws.send(JSON.stringify({ t: 'ping', id: id }));
+  };
+  // NTP-style: offset from the round trip with the lowest RTT among the last 8 (least queueing delay)
+  Net.prototype._pong = function (m) {
+    var sent = this._pings[m.id]; delete this._pings[m.id];
+    if (!sent || !m.serverNow) return;
+    var now = Date.now(), rtt = now - sent;
+    this.samples.push({ rtt: rtt, off: m.serverNow + rtt / 2 - now }); if (this.samples.length > 8) this.samples.shift();
+    var best = this.samples.reduce(function (a, b) { return b.rtt < a.rtt ? b : a; });
+    this.offset = best.off; this.synced = true;
+    var r = this.samples.map(function (x) { return x.rtt; }).sort(function (a, b) { return a - b; }); this.rtt = r[r.length >> 1];
+  };
   Net.prototype.serverNow = function () { return Date.now() + this.offset; };
   Net.prototype.forget = function () { this.session = null; this.wantRejoin = false; try { sessionStorage.removeItem('ooo.session'); } catch (e) {} };
-  Net.prototype.close = function () { this.closedByUser = true; if (this.ws) this.ws.close(); };
+  Net.prototype.close = function () { this.closedByUser = true; clearInterval(this._pingTimer); if (this.ws) this.ws.close(); };
 
   // ---------------------------------------------------------------------------------
   function RemoteGame(net, myId) {
@@ -145,7 +165,7 @@
     this.listeners = []; this.phase = 'countdown'; this.score = 0; this.paused = false;
     this.timeLeft = 0; this.timeTotal = 1; this.endsAt = 0; this._lastSec = null;
     this.round = null; this.puzzle = null; this.puzzleIdx = 0; this.myStatus = 'idle'; this.players = [];
-    this.lastResult = null; this.cdEndsAt = 0;
+    this.lastResult = null; this.cdEndsAt = 0; this._reveal = null;
   }
   RemoteGame.prototype.on = function (fn) { this.listeners.push(fn); return this; };
   RemoteGame.prototype._emit = function (type, extra) {
@@ -156,11 +176,13 @@
   RemoteGame.prototype.currentPuzzle = function () { return this.puzzle; };
   RemoteGame.prototype.unsolved = function () { return this.puzzle ? this.puzzle.targets.filter(function (t) { return !t.solved; }) : []; };
   RemoteGame.prototype.setPaused = function () {};           // the server's clock can't be paused
+  // each message carries the synced time it was typed; nothing is sent after the buzzer
   RemoteGame.prototype.feed = function (s) {
-    if (this.phase === 'playing' && this.myStatus === 'playing' && s) this.net.send({ t: 'letters', s: s });
+    var now = this.net.serverNow();
+    if (this.phase === 'playing' && this.myStatus === 'playing' && s && now < this.endsAt) this.net.send({ t: 'letters', s: s, at: Math.round(now) });
     return [];
   };
-  RemoteGame.prototype.backspace = function () { if (this.phase === 'playing') this.net.send({ t: 'bs' }); };
+  RemoteGame.prototype.backspace = function () { if (this.phase === 'playing' && this.net.serverNow() < this.endsAt) this.net.send({ t: 'bs' }); };
   RemoteGame.prototype.tick = function () {
     var now = this.net.serverNow();
     if (this.phase === 'countdown') {
@@ -172,7 +194,14 @@
       if (sec !== this._lastSec) { this._lastSec = sec; if (sec > 0) this._emit('second', { seconds: sec }); }
     }
   };
+  // The server sends a puzzle slightly ahead of startsAt; reveal it at that moment (same for everyone).
   RemoteGame.prototype._setPuzzle = function (m) {
+    var self = this, wait = m.startsAt ? m.startsAt - this.net.serverNow() : 0;
+    clearTimeout(this._reveal); this._reveal = null;
+    if (wait > 8) { this._reveal = setTimeout(function () { self._reveal = null; self._showPuzzle(m); }, Math.min(wait, 3000)); return; }
+    this._showPuzzle(m);
+  };
+  RemoteGame.prototype._showPuzzle = function (m) {
     this.round = m.round; this.puzzleIdx = m.index;
     var p = m.puzzle; p.targets.forEach(function (t) { t.solved = false; t.answer = null; });
     p.title = m.round.title; this.puzzle = p;
@@ -199,6 +228,7 @@
         var me = m.players.filter(function (p) { return p.id === self.myId; })[0]; if (me) this.score = me.score;
         this._emit('progress', { players: m.players }); break;
       case 'puzzleEnd': {
+        if (this._reveal) { clearTimeout(this._reveal); this._reveal = null; }
         var wasPlaying = this.myStatus === 'playing';
         if (this.puzzle) m.answers.forEach(function (a) { var t = self.puzzle.targets[a.id]; if (t) t.answer = a.answer; });
         this.phase = 'feedback'; if (wasPlaying) this.myStatus = m.reason === 'time' ? 'timeout' : 'out';
@@ -214,7 +244,7 @@
   RemoteGame.prototype.resume = function (room) {
     var self = this;
     if (room.state === 'playing' && room.puzzle) {
-      this._setPuzzle({ round: room.round, index: room.puzzleIndex, puzzle: room.puzzle, durationMs: room.durationMs, endsAt: room.endsAt });
+      this._showPuzzle({ round: room.round, index: room.puzzleIndex, puzzle: room.puzzle, durationMs: room.durationMs, endsAt: room.endsAt });
       var mine = room.mine;
       if (mine) {
         mine.solved.forEach(function (s) { var t = self.puzzle.targets[s.id]; t.solved = true; t.answer = s.answer; self._emit('restored', { target: t }); });

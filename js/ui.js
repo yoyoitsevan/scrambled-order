@@ -256,8 +256,9 @@
     if (W !== 640) { L0 = 18; R0 = W - L0 - FW; ML = half - FW * 1.15; MR = half + FW * 0.15; }   // portrait: birds are drawn 1.3x
   }
   function placeBirds(f) { f = Math.max(0, Math.min(1, f)); birdL.style.left = (L0 + (ML - L0) * f) + 'px'; birdR.style.left = (R0 + (MR - R0) * f) + 'px'; }
+  var birdFrame = -1;
   function resetBirds() {
-    birdGeometry(); birdMode = 'walk'; crash.className = '';
+    birdGeometry(); birdMode = 'walk'; birdFrame = -1; crash.className = '';
     [birdL, birdR].forEach(function (b) { b.className = 'bird'; b.style.visibility = 'visible'; b.style.transform = ''; });
     placeBirds(0);
   }
@@ -274,7 +275,7 @@
     birdL.style.transform = 'translateY(' + bl.toFixed(2) + 'px) rotate(' + rl.toFixed(2) + 'deg)';
     birdR.style.transform = 'translateY(' + br.toFixed(2) + 'px) rotate(' + rr.toFixed(2) + 'deg)';
     var fl = Math.floor(e * 3) % 3, frR = (fl + 1) % 3;
-    birdL.firstChild.style.backgroundPosition = (-FW * fl) + 'px 0'; birdR.firstChild.style.backgroundPosition = (-FW * frR) + 'px 0';
+    if (fl !== birdFrame) { birdFrame = fl; birdL.firstChild.style.backgroundPosition = (-FW * fl) + 'px 0'; birdR.firstChild.style.backgroundPosition = (-FW * frR) + 'px 0'; }
   }
   function freezeBirds() { if (birdMode === 'walk') birdMode = 'frozen'; }
   function dropBirds() {
@@ -396,12 +397,15 @@
   }
 
   // ---------- loop ----------
+  var clockText = '';
   function frame(t) {
     requestAnimationFrame(frame);
     var dt = Math.min(250, t - (lastT || t)); lastT = t;   // clamp: a hidden tab pauses the solo clock
     if (!game) return;
     game.tick(dt);
-    if (game.phase === 'playing' || game.phase === 'feedback') $('clockNum').textContent = '\u23F1 ' + Math.ceil(game.timeLeft / 1000) + 's';
+    if (game.phase === 'playing' || game.phase === 'feedback') {     // touch the DOM only when the number changes
+      var ct = '\u23F1 ' + Math.ceil(game.timeLeft / 1000) + 's'; if (ct !== clockText) { clockText = ct; $('clockNum').textContent = ct; }
+    }
     updateBirds();
   }
   function togglePause() {
@@ -584,6 +588,8 @@
       if (sess && (!params.get('room') || params.get('room').toUpperCase() === sess.code)) { net.wantRejoin = true; net.lastName = sess.name; }
     }
     window.OOO.ready = true;
+    // warm the cache with the profile's in-game images once the page is idle (no fetch mid-game)
+    if (P.preload && P.preload.length) setTimeout(function () { P.preload.forEach(function (u) { var im = new Image(); im.src = u; }); }, 800);
   }
   window.OOO = window.OOO || {};
   loadData().then(init).catch(function (e) {
