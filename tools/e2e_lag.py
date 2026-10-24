@@ -5,7 +5,7 @@ the same moment, both clocks run out at the same moment, both earn the same poin
 Usage: python tools/e2e_lag.py [base-url] [one_way_ms]   (classic: CLASSIC_PW=... for login + app key)
 Env: EXPECT_FAIR=1 asserts; FAST=0 real timings; JITTER=ms random extra delay; PUZZLES=n (default 6)
 HINTS=1: play the whole game. Rounds 1-2 are solved outright; in the storybooks each bot solves one word, then
-at 70% of the clock starts another (first letter, the rest 1.5 s later: its value is frozen meanwhile) and lets
+at 72% of the clock (clear of a 5-point rounding edge) starts another (first letter, the rest 1.5 s later: its value is frozen meanwhile) and lets
 the clock run out, so both see every auto-reveal. Checks both get the same reveals at the same moment, the same
 on-screen word value at each reveal, and the same points."""
 import sys, os, re, json, time, subprocess, hmac, hashlib, statistics
@@ -37,7 +37,7 @@ AGENT = """(() => { const WORDS = %s, REACT = %d, HINTS = %s;
         const keys = (HINTS && !story ? game.unsolved() : game.unsolved().slice(0, 1)).map(t => solve(t).slice(0, 3).toLowerCase()).join('');
         setTimeout(() => type(game, keys), REACT);
         if (HINTS && story) setTimeout(() => { const u = game.unsolved()[1] || game.unsolved()[0]; if (!u || game.puzzle !== p) return;
-          const key = solve(u).slice(0, 3).toLowerCase(); type(game, key[0]); setTimeout(() => type(game, key.slice(1)), 1500); }, 0.7 * game.timeTotal); }
+          const key = solve(u).slice(0, 3).toLowerCase(); type(game, key[0]); setTimeout(() => type(game, key.slice(1)), 1500); }, 0.72 * game.timeTotal); }
       if (ev.type === 'reveal') { R.rev.push(game.round.round + '.' + game.puzzleIdx + ':' + ev.answer); R.revAt.push(Date.now());
         const pn = game.pointsNow(); R.revPts.push(pn ? pn.points : null); }
       if (ev.type === 'finished') R.done = true;
