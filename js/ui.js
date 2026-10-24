@@ -100,7 +100,7 @@
   // ---------- timers owned by the current puzzle ----------
   var anim = [];
   function later(fn, ms) { var id = setTimeout(fn, ms); anim.push(id); return id; }
-  function clearAnim() { anim.forEach(clearTimeout); anim = []; Q = []; qBusy = false; fillText = ''; keepFill = false; pending = ''; renderBox(); }
+  function clearAnim() { anim.forEach(clearTimeout); anim = []; Q = []; qBusy = false; curFill = null; fillText = ''; keepFill = false; pending = ''; renderBox(); }
 
   // ---------- typebox: a hidden input captures keys; #typeText shows the fill + typed-ahead letters ----------
   var SENT = ' ', pending = '', fillText = '', keepFill = false;
@@ -144,7 +144,7 @@
   function boxFlash(cls) { var b = $('typeBox'); b.classList.remove('shake', 'good', 'bad'); void b.offsetWidth; if (cls) b.classList.add(cls); }
 
   // ---------- the auto-fill queue: fills play one after another; type-ahead never drops letters ----------
-  var Q = [], qBusy = false;
+  var Q = [], qBusy = false, curFill = null;   // curFill: the solved word now filling in (its points show as locked in)
   function enqueue(item) { Q.push(item); if (!qBusy) runQ(); }
   function runQ() {
     var it = Q.shift();
@@ -154,11 +154,12 @@
     if (it.kind === 'wait') { later(runQ, it.ms); return; }
     if (it.kind === 'fn') { it.fn(); runQ(); return; }
     var word = it.answer, i = it.from;
+    if (it.kind === 'fill') curFill = it;
     fillText = word.slice(0, i); renderBox();
     (function step() {
       if (i >= word.length) {
         if (it.kind === 'fill') {
-          markWord(it.id, 'solved'); boxFlash('good'); A.play('correct');
+          curFill = null; markWord(it.id, 'solved'); boxFlash('good'); A.play('correct');
           setFeedback('+' + it.points + (it.last ? '  SOLVED!' + (mode === 'multi' ? ' WAITING FOR THE OTHERS...' : '') : '  NICE!'), 'good');
           if (it.last) { keepFill = true; qBusy = false; return; }
           later(function () { fillText = ''; renderBox(); runQ(); }, game.cfg.wordHoldMs);
@@ -187,7 +188,7 @@
       p.targets.forEach(function (t, i) { var b = document.querySelector('.obox[data-i="' + i + '"]'); if (b) b.innerHTML = span(t); });
     } else {
       var st = $('story'), max = p.kind === 'storyAll' ? 170 : 150, size = p.kind === 'storyAll' ? 20 : 21;
-      st.innerHTML = p.segments.map(function (s) { return s.t != null ? span(p.targets[s.t]) : esc(s.text); }).join('');
+      st.innerHTML = p.segments.map(function (s) { return s.t != null ? span(p.targets[s.t]) : s.given ? '<span class="given">' + esc(s.text) + '</span>' : esc(s.text); }).join('');
     }
     $('instr').textContent = r.instruction + (p.missing ? '  (MISSING LETTERS!)' : '');
     markNext();
@@ -296,6 +297,18 @@
     f.style.fontSize = '';
     if (isPortrait() && text) { var fs = 19; while (fs > 10 && f.scrollWidth > f.clientWidth + 1) { fs--; f.style.fontSize = fs + 'px'; } }
   }
+  // What the next word is worth: drops over the last half of the clock; locked in once you start typing
+  // an answer and while a solved word fills in (that is what you are awarded).
+  var ptsText = null;
+  function updatePoints() {
+    var pn = game && game.pointsNow ? game.pointsNow() : null, p = game && game.currentPuzzle && game.currentPuzzle(), txt, cls;
+    if (curFill) { txt = '+' + curFill.points; cls = 'frozen'; }
+    else if (!pn || !p) { txt = ''; cls = 'off'; }
+    else { txt = '+' + pn.points; cls = pn.frozen ? 'frozen' : pn.points < E.pointsFor(p.base, 1, game.cfg) ? 'decay' : ''; }
+    if (txt + cls === ptsText) return;
+    ptsText = txt + cls; $('ptsNum').textContent = txt; $('ptsBox').className = cls;
+    $('ptsLbl').textContent = cls === 'frozen' ? 'LOCKED IN' : 'WORD VALUE';
+  }
   function setScore(n, bump) { var el = $('scoreNum'); el.textContent = n; if (bump) { el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump'); } }
 
   // ---------- multiplayer widgets ----------
@@ -340,6 +353,11 @@
         enqueue({ kind: 'fill', id: ev.target.id, answer: ev.target.answer, from: 3, points: ev.points, last: ev.last });
         markNext(); break;
       case 'restored': markWord(ev.target.id, 'solved'); markNext(); break;
+      case 'reveal':                          // storybook auto-unscramble: a free hint, scores nothing
+        markWord(ev.id, 'hint'); markNext(); A.play('update'); break;
+      case 'skipped':
+        pending = pending.slice(3); renderBox(); boxFlash(null);
+        setFeedback('"' + ev.chunk + '" WAS ALREADY UNSCRAMBLED - NO PENALTY', 'time'); break;
       case 'puzzleSolved': freezeBirds(); markNext(); break;
       case 'wrong':
         pending = ''; renderBox(); boxFlash('shake'); later(function () { boxFlash('bad'); }, 360);
@@ -406,6 +424,7 @@
     if (game.phase === 'playing' || game.phase === 'feedback') {     // touch the DOM only when the number changes
       var ct = '\u23F1 ' + Math.ceil(game.timeLeft / 1000) + 's'; if (ct !== clockText) { clockText = ct; $('clockNum').textContent = ct; }
     }
+    updatePoints();
     updateBirds();
   }
   function togglePause() {

@@ -166,7 +166,17 @@
     this.timeLeft = 0; this.timeTotal = 1; this.endsAt = 0; this._lastSec = null;
     this.round = null; this.puzzle = null; this.puzzleIdx = 0; this.myStatus = 'idle'; this.players = [];
     this.lastResult = null; this.cdEndsAt = 0; this._reveal = null;
+    this._hints = []; this._resetTyping();
   }
+  // Local mirror of the server's point freeze: the synced time the first letter of each answer was typed.
+  RemoteGame.prototype._resetTyping = function () { this._buf = 0; this._bufStart = null; this._chunks = []; };
+  RemoteGame.prototype._clearHints = function () { this._hints.forEach(clearTimeout); this._hints = []; };
+  // What the next word is worth right now (same server clock and formula as the server's award).
+  RemoteGame.prototype.pointsNow = function () {
+    var p = this.puzzle; if (this.phase !== 'playing' || !p || this.myStatus !== 'playing') return null;
+    var now = this.net.serverNow(), st = this._chunks.length ? this._chunks[0] : this._bufStart, te = E.valueTime(st, now, this.cfg);
+    return { points: E.pointsFor(p.base, (this.endsAt - te) / this.timeTotal, this.cfg), frozen: st != null && te === st };
+  };
   RemoteGame.prototype.on = function (fn) { this.listeners.push(fn); return this; };
   RemoteGame.prototype._emit = function (type, extra) {
     var ev = Object.assign({ type: type }, extra || {}), self = this;
@@ -174,15 +184,36 @@
   };
   RemoteGame.prototype.currentRound = function () { return this.round; };
   RemoteGame.prototype.currentPuzzle = function () { return this.puzzle; };
-  RemoteGame.prototype.unsolved = function () { return this.puzzle ? this.puzzle.targets.filter(function (t) { return !t.solved; }) : []; };
+  RemoteGame.prototype.unsolved = function () { return this.puzzle ? this.puzzle.targets.filter(function (t) { return !t.solved && !t.revealed; }) : []; };
   RemoteGame.prototype.setPaused = function () {};           // the server's clock can't be paused
   // each message carries the synced time it was typed; nothing is sent after the buzzer
   RemoteGame.prototype.feed = function (s) {
     var now = this.net.serverNow();
-    if (this.phase === 'playing' && this.myStatus === 'playing' && s && now < this.endsAt) this.net.send({ t: 'letters', s: s, at: Math.round(now) });
+    if (this.phase === 'playing' && this.myStatus === 'playing' && s && now < this.endsAt) {
+      this.net.send({ t: 'letters', s: s, at: Math.round(now) });
+      for (var i = 0; i < E.normalize(s).length; i++) {
+        if (!this._buf) this._bufStart = Math.round(now);
+        if (++this._buf === 3) { this._chunks.push(this._bufStart); this._buf = 0; this._bufStart = null; }
+      }
+    }
     return [];
   };
-  RemoteGame.prototype.backspace = function () { if (this.phase === 'playing' && this.net.serverNow() < this.endsAt) this.net.send({ t: 'bs' }); };
+  RemoteGame.prototype.backspace = function () {
+    if (this.phase === 'playing' && this.net.serverNow() < this.endsAt) {
+      this.net.send({ t: 'bs' });
+      if (this._buf && !--this._buf) this._bufStart = null;
+    }
+  };
+  // Storybook auto-reveal: the server announces it ahead of time; show it at its server time `at`.
+  RemoteGame.prototype._hint = function (m) {
+    var self = this, wait = m.at - this.net.serverNow();
+    function show() {
+      var t = self.puzzle && self.puzzle.targets[m.id]; if (!t || t.solved || t.revealed || self.phase !== 'playing') return;
+      t.revealed = true; t.answer = m.answer;
+      self._emit('reveal', { target: t, id: m.id, answer: m.answer });
+    }
+    if (wait > 8) this._hints.push(setTimeout(show, Math.min(wait, 5000))); else show();
+  };
   RemoteGame.prototype.tick = function () {
     var now = this.net.serverNow();
     if (this.phase === 'countdown') {
@@ -202,8 +233,8 @@
     this._showPuzzle(m);
   };
   RemoteGame.prototype._showPuzzle = function (m) {
-    this.round = m.round; this.puzzleIdx = m.index;
-    var p = m.puzzle; p.targets.forEach(function (t) { t.solved = false; t.answer = null; });
+    this.round = m.round; this.puzzleIdx = m.index; this._clearHints(); this._resetTyping();
+    var p = m.puzzle; p.targets.forEach(function (t) { t.solved = false; t.revealed = false; t.answer = null; });
     p.title = m.round.title; this.puzzle = p;
     this.timeTotal = m.durationMs; this.endsAt = m.endsAt; this.timeLeft = m.endsAt - this.net.serverNow();
     this.phase = 'playing'; this.myStatus = 'playing'; this._lastSec = Math.ceil(this.timeLeft / 1000);
@@ -218,22 +249,25 @@
       case 'puzzle': this._setPuzzle(m); break;
       case 'solved': {
         var t = this.puzzle && this.puzzle.targets[m.targetId]; if (!t) break;
-        t.solved = true; t.answer = m.answer; this.score = m.score;
+        t.solved = true; t.answer = m.answer; this.score = m.score; this._chunks.shift();
         if (m.last) this.myStatus = 'done';
         this._emit('solved', { target: t, typed: 3, points: m.points, score: m.score, last: m.last, fillMs: (t.answer.length - 3) * this.cfg.letterMs });
         if (m.last) this._emit('puzzleSolved', {});
         break; }
-      case 'wrong': this.myStatus = 'out'; this._emit('wrong', { chunk: m.chunk, reveal: [], waitForEnd: true }); break;
+      case 'reveal': this._hint(m); break;
+      case 'skipped': this._chunks.shift(); this._emit('skipped', { chunk: m.chunk }); break;
+      case 'wrong': this.myStatus = 'out'; this._resetTyping(); this._emit('wrong', { chunk: m.chunk, reveal: [], waitForEnd: true }); break;
       case 'progress': this.players = m.players;
         var me = m.players.filter(function (p) { return p.id === self.myId; })[0]; if (me) this.score = me.score;
         this._emit('progress', { players: m.players }); break;
       case 'puzzleEnd': {
         if (this._reveal) { clearTimeout(this._reveal); this._reveal = null; }
+        this._clearHints();
         var wasPlaying = this.myStatus === 'playing';
         if (this.puzzle) m.answers.forEach(function (a) { var t = self.puzzle.targets[a.id]; if (t) t.answer = a.answer; });
         this.phase = 'feedback'; if (wasPlaying) this.myStatus = m.reason === 'time' ? 'timeout' : 'out';
         this.timeLeft = m.reason === 'time' ? 0 : this.timeLeft;
-        var rev = this.puzzle ? this.puzzle.targets.filter(function (t) { return !t.solved; }).map(function (t) { return t.id; }) : [];
+        var rev = this.puzzle ? this.puzzle.targets.filter(function (t) { return !t.solved && !t.revealed; }).map(function (t) { return t.id; }) : [];
         if (wasPlaying && m.reason === 'time') this._emit('timeout', { reveal: rev, multiplayer: true });
         this._emit('puzzleEnd', { reason: m.reason, reveal: rev, standings: m.standings, results: m.results, revealMs: m.revealMs, last: m.last });
         break; }
@@ -250,6 +284,7 @@
         mine.solved.forEach(function (s) { var t = self.puzzle.targets[s.id]; t.solved = true; t.answer = s.answer; self._emit('restored', { target: t }); });
         this.myStatus = mine.status;
       }
+      (room.reveals || []).forEach(function (r) { self._hint(r); });
     } else if (room.round) { this.round = room.round; this.phase = room.state === 'intro' ? 'roundIntro' : room.state === 'reveal' ? 'feedback' : this.phase; }
     var me = room.players.filter(function (p) { return p.id === self.myId; })[0]; if (me) this.score = me.score;
     this.players = room.players;

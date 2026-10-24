@@ -1,5 +1,5 @@
 {
- "_readme": "One category per set; the game picks one set per round and 3 of its items (CONFIG.puzzlesPerRound). Round 1: {clue, answer} (5+ letters). Round 2: {clue, answers:[3 words of 5+ letters]} with different first three letters. Round 3: {story} with [Bracketed Phrases]; words of 4+ letters inside the brackets get scrambled. Round 4: {story}, a 10-20 word passage; every word of 4+ letters is scrambled; words may be solved in any order. Any item may set \"seconds\" (default: round base + 3 s per extra word). The engine scrambles; don't do it by hand. Afterwards run: python3 tools/build_data.py && node tools/test-engine.js (checks these rules).",
+ "_readme": "One category per set; the game picks one set per round and 3 of its items (CONFIG.puzzlesPerRound). Round 1: {clue, answer} (5+ letters). Round 2: {clue, answers:[3 words of 5+ letters]} with different first three letters. Round 3: {story} with [Bracketed Phrases]; words of 4+ letters inside the brackets get scrambled. Round 4: {story}, a 10-20 word passage; every word of 4+ letters is scrambled except its key words: list ~30% of them (at least 2) in \"given\":[...] to show unscrambled as hints (if omitted, the engine picks them); words may be solved in any order. Any item may set \"seconds\" (default: round base + 3 s per extra word). The engine scrambles; don't do it by hand. Afterwards run: python3 tools/build_data.py && node tools/test-engine.js (checks these rules).",
  "rounds": [
   {
    "round": 1,
@@ -293,19 +293,44 @@
      "category": "Tall Tales",
      "items": [
       {
-       "story": "Grandpa swears a river trout once leaped clear over his rowboat and stole his sandwich."
+       "story": "Grandpa swears a river trout once leaped clear over his rowboat and stole his sandwich.",
+       "given": [
+        "river",
+        "rowboat",
+        "sandwich"
+       ]
       },
       {
-       "story": "Every morning our rooster crows twice, then naps on the porch until lunch arrives."
+       "story": "Every morning our rooster crows twice, then naps on the porch until lunch arrives.",
+       "given": [
+        "rooster",
+        "porch",
+        "lunch"
+       ]
       },
       {
-       "story": "The night the power failed, we told ghost stories by candlelight and nobody slept."
+       "story": "The night the power failed, we told ghost stories by candlelight and nobody slept.",
+       "given": [
+        "power",
+        "ghost",
+        "candlelight"
+       ]
       },
       {
-       "story": "My little sister built a blanket fort so large that the family cat moved in for good."
+       "story": "My little sister built a blanket fort so large that the family cat moved in for good.",
+       "given": [
+        "sister",
+        "blanket",
+        "family"
+       ]
       },
       {
-       "story": "Snow fell all weekend, so the whole street held a giant snowball battle in the park."
+       "story": "Snow fell all weekend, so the whole street held a giant snowball battle in the park.",
+       "given": [
+        "Snow",
+        "snowball",
+        "park"
+       ]
       }
      ]
     },
@@ -313,19 +338,45 @@
      "category": "Travel Diary",
      "items": [
       {
-       "story": "We packed sandwiches, maps and sunscreen, then drove north to watch whales leap beside the cliffs."
+       "story": "We packed sandwiches, maps and sunscreen, then drove north to watch whales leap beside the cliffs.",
+       "given": [
+        "sunscreen",
+        "drove",
+        "whales",
+        "cliffs"
+       ]
       },
       {
-       "story": "Our train rolled through quiet mountain towns while snow drifted past the frosty windows."
+       "story": "Our train rolled through quiet mountain towns while snow drifted past the frosty windows.",
+       "given": [
+        "train",
+        "mountain",
+        "snow",
+        "windows"
+       ]
       },
       {
-       "story": "At the harbor, fishing boats bobbed in the waves as seagulls begged loudly for scraps."
+       "story": "At the harbor, fishing boats bobbed in the waves as seagulls begged loudly for scraps.",
+       "given": [
+        "harbor",
+        "boats",
+        "seagulls"
+       ]
       },
       {
-       "story": "The desert campsite was silent until a curious coyote sniffed around our tent at midnight."
+       "story": "The desert campsite was silent until a curious coyote sniffed around our tent at midnight.",
+       "given": [
+        "desert",
+        "coyote",
+        "tent"
+       ]
       },
       {
-       "story": "On the last day of vacation, we built a sandcastle taller than our father."
+       "story": "On the last day of vacation, we built a sandcastle taller than our father.",
+       "given": [
+        "vacation",
+        "sandcastle"
+       ]
       }
      ]
     }

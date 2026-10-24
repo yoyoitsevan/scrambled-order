@@ -113,6 +113,8 @@ button { font-family: inherit; cursor: pointer; }
 .scr.missing { text-transform: uppercase; text-decoration: none; letter-spacing: 6px; }
 .scr.solved { text-decoration: none; text-transform: uppercase; color: #ffe94d; animation: pop .5s ease-out; }
 .scr.revealed { text-decoration: none; text-transform: uppercase; color: #ffb0a8; }
+.scr.hint { text-decoration: underline dotted #9df3ff; text-underline-offset: 4px; text-transform: uppercase; color: #9df3ff; animation: pop .5s ease-out; }   /* auto-unscrambled: free, no points */
+.given { color: #d4ffc8; }   /* round 4 key words shown unscrambled */
 #stage.k-single #greenBox, #stage.k-story #greenBox, #stage.k-storyAll #greenBox { display: flex; }
 #stage.k-single #greenBox { height: 150px; }
 #stage.k-storyAll #greenBox { top: 102px; height: 186px; padding: 6px 14px; }
@@ -150,6 +152,14 @@ button { font-family: inherit; cursor: pointer; }
 #scoreBox .lbl { color: #ffe94d; font: 800 11px "Trebuchet MS", sans-serif; letter-spacing: 2px; }
 #scoreNum { color: #fff; font: 900 24px "Trebuchet MS", sans-serif; text-shadow: 2px 2px 0 #000; }
 #scoreNum.bump { animation: pop .4s; }
+/* what the next word is worth: drops late in the clock (orange), locked in while you answer (ice blue) */
+#ptsBox { position: absolute; left: 470px; top: 326px; width: 120px; height: 50px; text-align: center; background: #1a0f6a; border: 3px solid #ffd400; border-radius: 6px; box-sizing: border-box; padding-top: 3px; }
+#ptsBox .lbl { color: #ffe94d; font: 800 11px "Trebuchet MS", sans-serif; letter-spacing: 1px; white-space: nowrap; }
+#ptsNum { color: #fff; font: 900 22px "Trebuchet MS", sans-serif; text-shadow: 2px 2px 0 #000; }
+#ptsBox.decay #ptsNum { color: #ffc46b; }
+#ptsBox.frozen { border-color: #7fe3ff; box-shadow: 0 0 10px #7fe3ffaa; } #ptsBox.frozen .lbl, #ptsBox.frozen #ptsNum { color: #c8f6ff; }
+#ptsBox.off { visibility: hidden; }
+#typeBox { z-index: 2; }
 #pausedBanner { position: absolute; inset: 0; z-index: 8; background: #000a; color: #ffe94d; font: 900 48px "Trebuchet MS", sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; letter-spacing: 6px; }
 #pausedBanner[hidden] { display: none; }
 #pausedBanner small { font-size: 14px; color: #fff; letter-spacing: 1px; margin-top: 8px; }
@@ -297,6 +307,8 @@ button { font-family: inherit; cursor: pointer; }
 #viewport.portrait #clockNum { left: 12px; top: 10px; font-size: 24px; }
 #viewport.portrait #scoreBox { left: auto; right: 8px; top: 4px; width: 100px; height: 44px; padding-top: 2px; }
 #viewport.portrait #scoreBox .lbl { font-size: 10px; } #viewport.portrait #scoreNum { font-size: 22px; }
+#viewport.portrait #ptsBox { left: 94px; top: 4px; width: 104px; height: 44px; padding-top: 2px; }
+#viewport.portrait #ptsBox .lbl { font-size: 10px; } #viewport.portrait #ptsNum { font-size: 21px; }
 #viewport.portrait #stage[data-screen="play"] #btnHelp { right: 114px; top: 6px; bottom: auto; width: 38px; height: 38px; background-size: 38px 38px; }
 #viewport.portrait #stage[data-screen="play"] #btnMute { right: 160px; top: 9px; bottom: auto; }
 #viewport.portrait #wire { left: 8px; right: 8px; width: auto; top: 100px; }

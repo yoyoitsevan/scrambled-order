@@ -11,6 +11,12 @@
  * its synced server time (`at`), accepted up to that player's measured one-way latency (median websocket
  * RTT / 2) plus a jitter allowance, never more than NET.capMs. Without a stamp, the measured one-way
  * latency is used. The buzzer waits the same allowance for typing still in flight.
+ *
+ * Points and hints use the same server clock for everyone: a word's value decays over the last half of
+ * the clock (E.pointsFor), frozen from the judged time of the first letter of the answer being typed
+ * (E.valueTime). Storybook auto-reveals are decided here on a fixed schedule (E.revealTimes) and announced
+ * revealLeadMs early with their server time `at`, so every client shows them at the same instant; letters
+ * judged as typed before `at` still count for the revealed word.
  */
 const crypto = require('crypto');
 const E = require('../js/engine.js');
@@ -35,6 +41,7 @@ class Room {
     this.players = new Map(); this.order = []; this.hostId = null;
     this.state = 'lobby'; this.chat = []; this.timer = null; this.lastActive = Date.now();
     this.rounds = null; this.roundIdx = 0; this.puzzleIdx = 0; this.endsAt = 0; this.startedAt = 0;
+    this.revealAt = {}; this.reveals = []; this.revealTimers = [];
     this.onEmpty = opts.onEmpty || (() => {});
     this.now = opts.now || (() => Date.now());
   }
@@ -118,7 +125,7 @@ class Room {
   playerList() {
     return this.order.map(id => this.players.get(id)).filter(Boolean).map(p => ({
       id: p.id, name: p.name, score: p.score, connected: p.connected, isHost: p.id === this.hostId,
-      status: p.status, solved: p.attempt ? p.puzzle().targets.length - p.attempt.unsolved().length : 0 }));
+      status: p.status, solved: p.attempt ? p.attempt.solvedCount() : 0 }));
   }
   snapshot(p) {
     const s = { code: this.code, state: this.state, hostId: this.hostId, players: this.playerList(), chat: this.chat.slice(-40),
@@ -129,6 +136,7 @@ class Room {
       s.puzzleIndex = this.puzzleIdx;
       if (this.state === 'playing') {
         s.puzzle = E.publicPuzzle(this.puzzle()); s.startsAt = this.startsAt; s.endsAt = this.endsAt; s.durationMs = this.puzzle().seconds * 1000;
+        s.reveals = this.reveals.slice();
         if (p && p.attempt) { s.mine = { status: p.status, buffer: p.attempt.buffer, solved: this.puzzle().targets.filter(t => p.attempt.solved[t.id]).map(t => ({ id: t.id, answer: t.answer })) }; }
       }
       if (this.state === 'finished') s.standings = this.standings();
@@ -168,8 +176,9 @@ class Room {
     const dur = pz.seconds * 1000, now = this.now();
     lead = Math.max(0, lead || 0);
     this.startsAt = now + lead; this.endsAt = this.startsAt + dur; this.puzzleStart = this.startsAt;
+    this.clearReveals(); this.revealAt = {}; this.reveals = [];
     for (const p of this.players.values()) {
-      p.attempt = new E.PuzzleState(pz); p.status = 'playing'; p.puzzlePts = 0; p.judgedAt = 0;
+      p.attempt = new E.PuzzleState(pz, this.revealAt); p.status = 'playing'; p.puzzlePts = 0; p.judgedAt = 0;
       p.puzzle = () => pz;
     }
     this.broadcast({ t: 'puzzle', round: { round: r.round, title: r.title, category: r.category, instruction: r.instruction, count: r.puzzles.length },
@@ -177,6 +186,32 @@ class Room {
     this.broadcastProgress();
     // at the buzzer, wait for typing still on its way from far-away players, then end the puzzle
     this.later(() => this.later(() => this.endPuzzle('time'), this.graceMs()), lead + dur);
+    // storybook auto-reveals: decided revealLeadMs before they show, so everyone sees them at `at`
+    E.revealTimes(pz, this.cfg).forEach(f => {
+      const at = this.startsAt + Math.round(f * dur);
+      this.revealTimers.push(setTimeout(() => this.revealDue(at), Math.max(0, at - this.cfg.revealLeadMs - now)));
+      this.revealTimers.push(setTimeout(() => this.revealShown(at), Math.max(0, at - now + 1)));
+    });
+  }
+  clearReveals() { this.revealTimers.forEach(clearTimeout); this.revealTimers = []; }
+  /** Pick the next storybook word to auto-reveal at server time `at` and announce it to everyone. */
+  revealDue(at) {
+    if (this.state !== 'playing' || at >= this.endsAt) return null;
+    const pz = this.puzzle(), live = this.connected().filter(p => p.status === 'playing' && p.attempt);
+    const id = E.pickReveal(pz, live.map(p => p.attempt), this.revealAt, this.cfg);
+    if (id == null) return null;
+    this.revealAt[id] = at;
+    const msg = { t: 'reveal', id, answer: pz.targets[id].answer, at };
+    this.reveals.push(msg);
+    this.broadcast(Object.assign({ serverNow: this.now() }, msg));
+    return id;
+  }
+  /** Once a reveal is showing: anyone it left with nothing to type has finished (rare: solved words in the lead window). */
+  revealShown(at) {
+    if (this.state !== 'playing') return;
+    let changed = false;
+    for (const p of this.connected()) if (p.status === 'playing' && p.attempt && p.attempt.done(at)) { p.status = 'done'; changed = true; }
+    if (changed) { this.broadcastProgress(); this.checkAllDone(); }
   }
   /** Server time at which p typed this message: its stamp `at`, trusted only within p's latency allowance. */
   judgedTime(p, at) {
@@ -192,13 +227,15 @@ class Room {
     p.judgedAt = tj;
     const letters = E.normalize(s).slice(0, 60);
     for (const c of letters) {
-      const r = p.attempt.feedLetter(c);
+      const r = p.attempt.feedLetter(c, tj);
       if (!r || r.ignored) continue;
-      const frac = Math.max(0, Math.min(1, (this.endsAt - tj) / (pz.seconds * 1000)));
+      if (r.given) { p.send({ t: 'skipped', chunk: r.chunk, targetId: r.target.id }); continue; }   // already revealed: no penalty
       if (r.ok) {
+        // the value is frozen from when this answer's first letter was typed (E.valueTime caps how long)
+        const frac = (this.endsAt - E.valueTime(r.startedAt, tj, this.cfg)) / (pz.seconds * 1000);
         const pts = E.pointsFor(pz.base, frac, this.cfg);
         p.score += pts; p.puzzlePts += pts;
-        const last = p.attempt.unsolved().length === 0;
+        const last = p.attempt.unsolved(tj).length === 0;
         if (last) p.status = 'done';
         p.send({ t: 'solved', targetId: r.target.id, answer: r.target.answer, points: pts, score: p.score, last });
       } else {
@@ -225,11 +262,11 @@ class Room {
   endPuzzle(reason) {
     if (this.state !== 'playing') return;
     const pz = this.puzzle();
-    this.state = 'reveal';
+    this.state = 'reveal'; this.clearReveals();
     for (const p of this.players.values()) { if (p.status === 'playing') p.status = reason === 'time' ? 'timeout' : 'out'; p.lastPts = p.puzzlePts; }
     const st = this.standings();
     const results = [...this.players.values()].map(p => ({ id: p.id, name: p.name, points: p.puzzlePts, status: p.status,
-      solved: pz.targets.length - (p.attempt ? p.attempt.unsolved().length : pz.targets.length) }));
+      solved: p.attempt ? p.attempt.solvedCount() : 0 }));
     const last = this.roundIdx === this.rounds.length - 1 && this.puzzleIdx === this.rounds[this.roundIdx].puzzles.length - 1;
     this.broadcast({ t: 'puzzleEnd', reason, answers: pz.targets.map(t => ({ id: t.id, answer: t.answer })), results, standings: st,
                      revealMs: this.t.revealMs, last });
@@ -256,7 +293,7 @@ class Room {
     for (const x of [...this.players.values()]) if (!x.connected) this.remove(x, true);
     this.broadcastRoom();
   }
-  destroy() { clearTimeout(this.timer); for (const p of this.players.values()) clearTimeout(p.dropTimer); }
+  destroy() { clearTimeout(this.timer); this.clearReveals(); for (const p of this.players.values()) clearTimeout(p.dropTimer); }
 }
 
 module.exports = { Room, cleanName, CODE_CHARS, MAX_PLAYERS, MIN_PLAYERS, NET };

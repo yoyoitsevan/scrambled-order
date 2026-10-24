@@ -3,7 +3,11 @@ ONE_WAY ms each way (RTT = 2x), A connects directly. Both bots react the same RE
 appears on THEIR screen and type the key one letter every 60 ms. Checks that both see the puzzle at
 the same moment, both clocks run out at the same moment, both earn the same points, and B stays smooth.
 Usage: python tools/e2e_lag.py [base-url] [one_way_ms]   (classic: CLASSIC_PW=... for login + app key)
-Env: EXPECT_FAIR=1 asserts; FAST=0 real timings; JITTER=ms random extra delay; PUZZLES=n (default 6)"""
+Env: EXPECT_FAIR=1 asserts; FAST=0 real timings; JITTER=ms random extra delay; PUZZLES=n (default 6)
+HINTS=1: play the whole game. Rounds 1-2 are solved outright; in the storybooks each bot solves one word, then
+at 70% of the clock starts another (first letter, the rest 1.5 s later: its value is frozen meanwhile) and lets
+the clock run out, so both see every auto-reveal. Checks both get the same reveals at the same moment, the same
+on-screen word value at each reveal, and the same points."""
 import sys, os, re, json, time, subprocess, hmac, hashlib, statistics
 from playwright.sync_api import sync_playwright
 BASE = (sys.argv[1] if len(sys.argv) > 1 else 'http://localhost:8780').rstrip('/')
@@ -18,22 +22,30 @@ def walk(o):
     elif isinstance(o, list): [walk(x) for x in o]
     elif isinstance(o, dict): [walk(v) for k, v in o.items() if k != '_readme']
 walk(data['rounds'])
-AGENT = """(() => { const WORDS = %s, REACT = %d;
+HINTS = os.environ.get('HINTS') == '1'
+AGENT = """(() => { const WORDS = %s, REACT = %d, HINTS = %s;
   function solve(t) { const clue = t.clue.toUpperCase(); let c;
     if (t.style === 'missing') { const rx = new RegExp('^' + clue.replace(/_/g, '.') + '$'); c = WORDS.filter(w => rx.test(w)); }
     else { const s = clue.split('').sort().join(''); c = WORDS.filter(w => w.length === t.len && w.split('').sort().join('') === s && w !== clue);
            if (!c.length) c = WORDS.filter(w => w.split('').sort().join('') === s); }
     return c.sort()[0] || 'QZX'; }
-  const R = window._lag = { shown: [], deadline: [], pts: [], fr: [], typedAt: [] }; let g = null, last = 0;
+  const R = window._lag = { shown: [], deadline: [], pts: [], fr: [], typedAt: [], rev: [], revAt: [], revPts: [], done: false }; let g = null, last = 0;
+  function type(game, key, then) { let i = 0; (function k() { if (i < key.length) { R.typedAt.push(Date.now()); game.feed(key[i++]); setTimeout(k, 60); } else if (then) then(); })(); }
   function attach(game) { g = game; game.on(ev => {
       if (ev.type === 'puzzle') { const now = Date.now(); R.shown.push(now); R.deadline.push(now + (game.endsAt - game.net.serverNow()));
-        const t = game.unsolved()[0], key = solve(t).slice(0, 3).toLowerCase();
-        setTimeout(() => { let i = 0; (function k() { if (i < key.length) { R.typedAt.push(Date.now()); game.feed(key[i++]); setTimeout(k, 60); } })(); }, REACT); }
+        const p = ev.puzzle, story = p.kind === 'story' || p.kind === 'storyAll';
+        const keys = (HINTS && !story ? game.unsolved() : game.unsolved().slice(0, 1)).map(t => solve(t).slice(0, 3).toLowerCase()).join('');
+        setTimeout(() => type(game, keys), REACT);
+        if (HINTS && story) setTimeout(() => { const u = game.unsolved()[1] || game.unsolved()[0]; if (!u || game.puzzle !== p) return;
+          const key = solve(u).slice(0, 3).toLowerCase(); type(game, key[0]); setTimeout(() => type(game, key.slice(1)), 1500); }, 0.7 * game.timeTotal); }
+      if (ev.type === 'reveal') { R.rev.push(game.round.round + '.' + game.puzzleIdx + ':' + ev.answer); R.revAt.push(Date.now());
+        const pn = game.pointsNow(); R.revPts.push(pn ? pn.points : null); }
+      if (ev.type === 'finished') R.done = true;
       if (ev.type === 'solved') R.pts.push(ev.points);
       if (ev.type === 'timeout') R.pts.push(0); }); }
   (function f(t) { if (window.OOO && window.OOO.game && window.OOO.game !== g && window.OOO.game.multiplayer) attach(window.OOO.game);
     if (last && g && g.phase === 'playing') R.fr.push(t - last); last = t; requestAnimationFrame(f); })(0);
-})();""" % (json.dumps(sorted(words)), REACT)
+})();""" % (json.dumps(sorted(words)), REACT, 'true' if HINTS else 'false')
 JITTER = int(os.environ.get('JITTER', '0')); Q = '/?fast=1' if os.environ.get('FAST', '1') == '1' else '/'
 proxy = None if LIVE else subprocess.Popen(['node', os.path.join(os.path.dirname(__file__), 'lagproxy.js'), str(PROXY), str(PORT), str(ONE_WAY), str(JITTER)], stdout=subprocess.PIPE)
 time.sleep(0 if LIVE else 0.6)
@@ -63,23 +75,35 @@ try:
         A.wait_for_function("document.body.innerText.includes('Far')", timeout=15000)
         rtt = B.evaluate("window.OOO.net && (window.OOO.net.rtt || null)")
         A.click('#btnStart', force=True)
-        A.wait_for_function(f"window._lag.pts.length >= {PUZZLES} ", timeout=180000)
-        B.wait_for_function(f"window._lag.pts.length >= {PUZZLES}", timeout=60000)
+        if HINTS:
+            A.wait_for_function("window._lag.done", timeout=600000); B.wait_for_function("window._lag.done", timeout=60000)
+        else:
+            A.wait_for_function(f"window._lag.pts.length >= {PUZZLES} ", timeout=180000)
+            B.wait_for_function(f"window._lag.pts.length >= {PUZZLES}", timeout=60000)
         ra, rb = A.evaluate('window._lag'), B.evaluate('window._lag')
-        n = min(len(ra['shown']), len(rb['shown']), PUZZLES)
+        n = min(len(ra['shown']), len(rb['shown']), 12 if HINTS else PUZZLES)
+        np_ = len(ra['pts']) if HINTS else n
         show = [rb['shown'][i] - ra['shown'][i] for i in range(n)]
         dead = [rb['deadline'][i] - ra['deadline'][i] for i in range(n)]
         fr = rb['fr'][10:]
         out = {'live': LIVE, 'one_way_ms': 0 if LIVE else ONE_WAY, 'jitter_ms': JITTER, 'rtt_ms_seen_by_far_client': B.evaluate("window.OOO.net.rtt || null"),
                'puzzle_shown_skew_ms(far-near)': show, 'clock_deadline_skew_ms(far-near)': [round(x) for x in dead],
-               'points_near': ra['pts'][:n], 'points_far': rb['pts'][:n],
+               'points_near': ra['pts'][:np_], 'points_far': rb['pts'][:np_],
                'far_frame_ms_median': round(statistics.median(fr), 1) if fr else None, 'far_long_frames_over_50ms': sum(1 for x in fr if x > 50)}
+        if HINTS:
+            out.update({'reveals_near': ra['rev'], 'reveals_far': rb['rev'], 'reveal_skew_ms(far-near)': [rb['revAt'][i] - ra['revAt'][i] for i in range(min(len(ra['revAt']), len(rb['revAt'])))],
+                        'word_value_at_reveal_near': ra['revPts'], 'word_value_at_reveal_far': rb['revPts']})
         print(json.dumps(out))
         errs = A._errs + B._errs; assert not errs, errs
         if os.environ.get('EXPECT_FAIR'):
             assert all(abs(x) <= 120 for x in show), ('puzzle shown at different moments', show)
             assert all(abs(x) <= 120 for x in dead), ('clocks run out at different moments', dead)
-            assert ra['pts'][:n] == rb['pts'][:n], ('unequal points for equal play', ra['pts'][:n], rb['pts'][:n])
+            assert ra['pts'][:np_] == rb['pts'][:np_], ('unequal points for equal play', ra['pts'][:np_], rb['pts'][:np_])
+            if HINTS:
+                assert ra['rev'] and ra['rev'] == rb['rev'], ('different reveals', ra['rev'], rb['rev'])
+                assert all(abs(x) <= 120 for x in out['reveal_skew_ms(far-near)']), ('reveals at different moments', out['reveal_skew_ms(far-near)'])
+                assert all(x is not None and y is not None and abs(x - y) <= 5 for x, y in zip(ra['revPts'], rb['revPts'])), ('different word values', ra['revPts'], rb['revPts'])
+                assert len(ra['pts']) == len(rb['pts']) >= 12, ('both scored the same words', ra['pts'], rb['pts'])
             print('lag fairness ok')
         b.close()
 finally:

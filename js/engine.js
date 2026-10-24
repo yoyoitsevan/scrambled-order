@@ -42,6 +42,21 @@
     revealGapMs: 450,
     revealTailMs: 1500,
     speedBonusMax: 0.5,
+    // A word is worth base * (1 + speedBonusMax) while at least decayStart of the clock is left, then
+    // slides steadily down to decayFloor of that at the buzzer. Typing the first letter of an answer
+    // freezes its value (for up to freezeMaxMs, so a lone typed letter can't hold it forever).
+    decayStart: 0.5,
+    decayFloor: 0.25,
+    freezeMaxMs: 3000,
+    // Storybooks (rounds 3 and 4) auto-unscramble words as the clock runs: up to revealShare of the
+    // words, evenly spaced from revealFrom to revealTo of the clock, never the last revealKeep unsolved ones.
+    revealFrom: 0.4,
+    revealTo: 0.9,
+    revealShare: 1 / 3,
+    revealKeep: 2,
+    revealLeadMs: 400,     // multiplayer: the server announces each reveal this long before it shows
+    // Round 4 shows about givenShare of its big words unscrambled as key-word hints (see parseStory).
+    givenShare: 0.3,
     ranks: [
       { min: 0,  name: 'Scrambled Egg' }, { min: 12, name: 'Letter Shuffler' }, { min: 28, name: 'Word Juggler' },
       { min: 48, name: 'Anagram Ace' },   { min: 68, name: 'Puzzle Master' },   { min: 86, name: 'Grand Unscrambler' }
@@ -74,16 +89,74 @@
     return w.split('').map(function (c, i) { return pick[i] ? '_' : c; }).join('');
   }
   function keyOf(word) { return word.slice(0, 3); }
+  // What one word is worth with `frac` of the clock left (1 = just started, 0 = the buzzer).
   function pointsFor(base, frac, cfg) {
-    frac = Math.max(0, Math.min(1, frac));
-    return Math.round((base + base * (cfg || CONFIG).speedBonusMax * frac) / 5) * 5;
+    cfg = cfg || CONFIG; frac = Math.max(0, Math.min(1, frac));
+    var full = base * (1 + cfg.speedBonusMax), ds = cfg.decayStart, fl = cfg.decayFloor;
+    var v = frac >= ds ? full : full * (fl + (1 - fl) * frac / ds);
+    return Math.max(5, Math.round(v / 5) * 5);
+  }
+  // The moment an answer's value is taken from: when its first letter was typed (frozen), but never
+  // more than freezeMaxMs before it was completed.
+  function valueTime(startedAt, at, cfg) {
+    return startedAt == null ? at : Math.max(startedAt, at - (cfg || CONFIG).freezeMaxMs);
+  }
+  // Auto-unscramble schedule: fractions of the clock (elapsed) at which a storybook word is revealed.
+  function revealTimes(p, cfg) {
+    cfg = cfg || CONFIG;
+    if (!p || (p.kind !== 'story' && p.kind !== 'storyAll')) return [];   // one-word answers (rounds 1-2) never auto-reveal
+    var n = p.targets.length, R = Math.max(0, Math.min(n - cfg.revealKeep, Math.ceil(n * cfg.revealShare))), out = [];
+    for (var k = 0; k < R; k++) out.push(cfg.revealFrom + (cfg.revealTo - cfg.revealFrom) * (R > 1 ? k / (R - 1) : 0));
+    return out;
+  }
+  // Which word to reveal next: the first in the puzzle's fixed reveal order that some player still
+  // needs, without leaving any player who needs it fewer than revealKeep words to solve themselves.
+  function pickReveal(p, attempts, revealAt, cfg) {
+    cfg = cfg || CONFIG;
+    var order = p.revealOrder || p.targets.map(function (t) { return t.id; });
+    for (var i = 0; i < order.length; i++) {
+      var id = order[i]; if (revealAt[id] != null) continue;
+      var needed = false, ok = true;
+      attempts.forEach(function (a) { if (a.solved[id]) return; needed = true; if (a.unsolved().length - 1 < cfg.revealKeep) ok = false; });
+      if (needed && ok) return id;
+    }
+    return null;
+  }
+
+  // Round 4 key words: the passage's most telling words of minLen+ letters stay unscrambled as hints.
+  // An item may list them ("given": [...]); otherwise about givenShare of the big words are picked,
+  // longest and capitalised (names) first, skipping filler words, spread across the passage.
+  var STOP = ('that,with,from,they,them,this,have,were,then,when,what,over,until,while,than,there,their,into,once,very,just,also,' +
+    'some,much,each,even,only,been,will,would,could,should,every,after,before,about,where,which,whole,again,never,always,ever').split(',');
+  function pickGiven(words, share) {   // words: [{w, idx, cap}] -> set of normalized words to show plainly
+    var n = words.length, k = n >= 5 ? Math.max(2, Math.round(n * share)) : n >= 3 ? 1 : 0, out = {}, used = {};
+    var cand = words.filter(function (x) { return STOP.indexOf(x.w.toLowerCase()) < 0; })
+      .map(function (x) { return { w: x.w, idx: x.idx, score: x.w.length + (x.cap ? 3 : 0) }; })
+      .sort(function (a, b) { return b.score - a.score || a.idx - b.idx; });
+    for (var pass = 0; pass < 2 && k > 0; pass++) cand.forEach(function (c) {
+      if (k <= 0 || out[c.w] || (pass === 0 && (used[c.idx - 1] || used[c.idx + 1]))) return;   // first pass: no two hints side by side
+      out[c.w] = true; used[c.idx] = true; k--;
+    });
+    return out;
   }
 
   // Split a story into segments: {text} kept as-is, {t: targetId} scrambled. In 'story', words
   // inside [brackets] are targets; in 'storyAll', every word. Either way only words with >= minLen
   // letters are scrambled; shorter ones are shown plainly.
-  function parseStory(story, kind, minLen, rng, targets) {
-    var segs = [], group = 0;
+  function parseStory(story, kind, minLen, rng, targets, item) {
+    var segs = [], group = 0, given = {};
+    if (kind === 'storyAll') {
+      var share = (item && item.givenShare != null) ? item.givenShare : CONFIG.givenShare;
+      if (item && item.given) item.given.forEach(function (w) { given[normalize(w)] = true; });
+      else {
+        var words = [];
+        story.split(/\s+/).forEach(function (tok, idx) {
+          var c = tok.match(/[A-Za-z]+(?:'[A-Za-z]+)?/); if (!c || normalize(c[0]).length < minLen) return;
+          words.push({ w: normalize(c[0]), idx: idx, cap: idx > 0 && /^[A-Z]/.test(c[0]) });
+        });
+        given = pickGiven(words, share);
+      }
+    }
     function pushWords(text, scramble) {
       text.split(/(\s+)/).forEach(function (tok) {
         if (!tok) return;
@@ -92,6 +165,7 @@
         var pre = tok.slice(0, core.index), post = tok.slice(core.index + core[0].length);
         if (pre) segs.push({ text: pre });
         var ans = normalize(core[0]);
+        if (given[ans]) { segs.push({ text: core[0], given: true }); if (post) segs.push({ text: post }); return; }
         var t = { id: targets.length, answer: ans, key: keyOf(ans), clue: scrambleWord(ans, rng).toLowerCase(), group: group, style: 'scramble' };
         targets.push(t); segs.push({ t: t.id });
         if (post) segs.push({ text: post });
@@ -117,8 +191,9 @@
         targets.push({ id: i, answer: ans, key: keyOf(ans), group: i, style: missing ? 'missing' : 'scramble',
           clue: missing ? blankWord(ans, rng) : scrambleWord(ans, rng) });
       });
-    } else segments = parseStory(item.story, rc.kind, rc.minLen || 4, rng, targets);
-    return { round: rc.round, kind: rc.kind, category: category, clue: item.clue || '', story: item.story || null,
+    } else segments = parseStory(item.story, rc.kind, rc.minLen || 4, rng, targets, item);
+    var revealOrder = segments ? shuffled(targets.map(function (t) { return t.id; }), rng) : null;
+    return { revealOrder: revealOrder, round: rc.round, kind: rc.kind, category: category, clue: item.clue || '', story: item.story || null,
              segments: segments, targets: targets, missing: !!missing,
              order: 'any',   // storybooks too: a correct word typed ahead of its turn must never end the turn
              seconds: item.seconds || (rc.seconds + rc.secondsPerWord * Math.max(0, targets.length - 1)), base: rc.base };
@@ -158,29 +233,45 @@
   // Letters go in one at a time; every 3rd buffered letter is judged against the next unsolved
   // word (order 'sequence', legacy) or any unsolved word (order 'any', what makePuzzle builds now);
   // with duplicate keys the earliest unsolved word wins.
-  function PuzzleState(puzzle) {
+  // Times are in whatever clock the caller uses (solo: ms of the puzzle clock elapsed; server: ms).
+  // revealAt {targetId: time} is shared by every player's attempt: a revealed word is shown to all,
+  // scores nothing and no longer needs typing (a letter typed before the reveal still counts for it).
+  function PuzzleState(puzzle, revealAt) {
     this.puzzle = puzzle; this.solved = {}; this.buffer = ''; this.failed = false; this.letters = 0;
+    this.revealAt = revealAt || {}; this.startedAt = null;
   }
-  PuzzleState.prototype.unsolved = function () {
-    var s = this.solved; return this.puzzle.targets.filter(function (t) { return !s[t.id]; });
+  PuzzleState.prototype.isRevealed = function (id, t) { var r = this.revealAt[id]; return r != null && (t == null || r <= t); };
+  PuzzleState.prototype.unsolved = function (t) {
+    var self = this; return this.puzzle.targets.filter(function (x) { return !self.solved[x.id] && !self.isRevealed(x.id, t); });
   };
+  PuzzleState.prototype.solvedCount = function () { return Object.keys(this.solved).length; };
   PuzzleState.prototype.next = function () { return this.unsolved()[0] || null; };
-  PuzzleState.prototype.done = function () { return this.failed || this.unsolved().length === 0; };
-  // returns null (still buffering), {ok:true, target} or {ok:false, chunk}
-  PuzzleState.prototype.feedLetter = function (c) {
-    if (this.done()) return { ignored: true };
+  PuzzleState.prototype.done = function (t) { return this.failed || this.unsolved(t).length === 0; };
+  // returns null (still buffering), {ok:true, target, startedAt}, {ok:false, chunk} or
+  // {given:true, chunk, target} (the word was auto-revealed: the chunk is dropped, no penalty)
+  PuzzleState.prototype.feedLetter = function (c, t) {
+    if (this.done(t)) return { ignored: true };
     c = normalize(c); if (!c) return null;
+    if (!this.buffer) this.startedAt = t == null ? null : t;
     this.buffer += c[0]; this.letters++;
     if (this.buffer.length < 3) return null;
-    var chunk = this.buffer; this.buffer = '';
-    var open = this.unsolved(), target = null;
+    var chunk = this.buffer, started = this.startedAt; this.buffer = ''; this.startedAt = null;
+    var open = this.unsolved(t), target = null;
     if (this.puzzle.order === 'sequence') { if (open[0] && open[0].key === chunk) target = open[0]; }
-    else target = open.filter(function (t) { return t.key === chunk; })[0] || null;
-    if (!target) { this.failed = true; return { ok: false, chunk: chunk }; }
+    else target = open.filter(function (x) { return x.key === chunk; })[0] || null;
+    if (!target) {
+      var self = this, gone = this.puzzle.targets.filter(function (x) { return x.key === chunk && !self.solved[x.id] && self.isRevealed(x.id, t); })[0];
+      if (gone) return { given: true, chunk: chunk, target: gone };
+      this.failed = true; return { ok: false, chunk: chunk };
+    }
     this.solved[target.id] = true;
-    return { ok: true, target: target };
+    return { ok: true, target: target, startedAt: started };
   };
-  PuzzleState.prototype.backspace = function () { if (this.buffer) this.buffer = this.buffer.slice(0, -1); return this.buffer; };
+  PuzzleState.prototype.backspace = function () {
+    if (this.buffer) this.buffer = this.buffer.slice(0, -1);
+    if (!this.buffer) this.startedAt = null;
+    return this.buffer;
+  };
 
   // ---- solo game ---------------------------------------------------------------------
   function Game(data, opts) {
@@ -199,6 +290,14 @@
     this.phase = 'idle'; this.score = 0; this.roundIdx = 0; this.puzzleIdx = 0;
     this.phaseLeft = 0; this.timeLeft = 0; this.timeTotal = 0; this.holdLeft = 0;
     this.attempt = null; this.lastResult = null; this.results = []; this._lastSec = null; this.paused = false; this._pts = 0;
+    this.revealAt = {}; this._revealPlan = []; this._revealIdx = 0;
+  };
+  Game.prototype.elapsed = function () { return this.timeTotal - this.timeLeft; };
+  // What the next word is worth right now, and whether a started answer has frozen that value.
+  Game.prototype.pointsNow = function () {
+    var p = this.currentPuzzle(); if (this.phase !== 'playing' || !p || !this.attempt) return null;
+    var t = this.elapsed(), st = this.attempt.startedAt, te = valueTime(st, t, this.cfg);
+    return { points: pointsFor(p.base, 1 - te / this.timeTotal, this.cfg), frozen: st != null && te === st };
   };
   Game.prototype.start = function () {
     this.reset(); this.phase = 'countdown'; this.phaseLeft = this.cfg.countdownMs;
@@ -218,14 +317,16 @@
   };
   Game.prototype._beginPuzzle = function () {
     var p = this.currentPuzzle();
-    this.attempt = new PuzzleState(p);
+    this.revealAt = {}; this.attempt = new PuzzleState(p, this.revealAt);
+    this._revealPlan = revealTimes(p, this.cfg); this._revealIdx = 0;
     this.phase = 'playing'; this.holdLeft = 0; this._pts = 0;
     this.timeTotal = this.timeLeft = p.seconds * 1000; this._lastSec = Math.ceil(this.timeLeft / 1000);
     this._emit('puzzle', { puzzle: p, index: this.puzzleIdx, count: this.currentRound().puzzles.length });
   };
   Game.prototype._endPuzzle = function (status, extra) {
     var p = this.currentPuzzle(), unsolved = this.unsolved();
-    var res = Object.assign({ round: p.round, index: this.puzzleIdx, status: status, solved: p.targets.length - unsolved.length,
+    var res = Object.assign({ round: p.round, index: this.puzzleIdx, status: status, solved: this.attempt.solvedCount(),
+      revealed: Object.keys(this.revealAt).length,
       total: p.targets.length, points: this._pts, answers: p.targets.map(function (t) { return t.answer; }),
       secondsUsed: +((this.timeTotal - this.timeLeft) / 1000).toFixed(2) }, extra || {});
     this.results.push(res); this.lastResult = res; this.phase = 'feedback';
@@ -260,6 +361,14 @@
       this.timeLeft -= ms;
       var sec = Math.max(0, Math.ceil(this.timeLeft / 1000));
       if (sec !== this._lastSec) { this._lastSec = sec; if (sec > 0) this._emit('second', { seconds: sec }); }
+      while (this.timeLeft > 0 && this._revealIdx < this._revealPlan.length && this.elapsed() >= this._revealPlan[this._revealIdx] * this.timeTotal) {
+        this._revealIdx++;
+        var id = pickReveal(this.currentPuzzle(), [this.attempt], this.revealAt, this.cfg);
+        if (id == null) continue;
+        this.revealAt[id] = this.elapsed();
+        var rt = this.currentPuzzle().targets[id];
+        this._emit('reveal', { target: rt, id: id, answer: rt.answer });
+      }
       if (this.timeLeft <= 0) { this.timeLeft = 0; this._emit('timeout', this._endPuzzle('timeout')); }
     } else if (ph === 'feedback') {
       this.phaseLeft -= ms; if (this.phaseLeft <= 0) this._advance();
@@ -270,11 +379,12 @@
     var out = [], letters = normalize(text);
     for (var i = 0; i < letters.length; i++) {
       if (this.phase !== 'playing' || this.paused) break;
-      var r = this.attempt.feedLetter(letters[i]);
+      var now = this.elapsed(), r = this.attempt.feedLetter(letters[i], now);
       if (!r || r.ignored) continue;
+      if (r.given) { this._emit('skipped', { chunk: r.chunk, target: r.target }); out.push({ state: 'skipped', chunk: r.chunk }); continue; }
       if (r.ok) {
         var t = r.target, p = this.currentPuzzle();
-        var pts = pointsFor(p.base, this.timeLeft / this.timeTotal, this.cfg);
+        var pts = pointsFor(p.base, 1 - valueTime(r.startedAt, now, this.cfg) / this.timeTotal, this.cfg);
         this.score += pts; this._pts += pts;
         var fill = this.fillMs(t.answer.length - 3), done = this.unsolved().length === 0;
         var queuedBefore = this.holdLeft;
@@ -315,6 +425,7 @@
   };
 
   return { Game: Game, PuzzleState: PuzzleState, buildPuzzles: buildPuzzles, publicPuzzle: publicPuzzle, pointsFor: pointsFor,
+           valueTime: valueTime, revealTimes: revealTimes, pickReveal: pickReveal, pickGiven: pickGiven,
            rankFor: rankFor, maxScoreOf: maxScoreOf, normalize: normalize, scrambleWord: scrambleWord, blankWord: blankWord,
            parseStory: parseStory, makePuzzle: makePuzzle, roundConfig: roundConfig, CONFIG: CONFIG, ROUND_DEFAULTS: ROUND_DEFAULTS };
 });

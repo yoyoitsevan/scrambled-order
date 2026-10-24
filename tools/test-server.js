@@ -69,6 +69,56 @@ function latencyTests() {
   console.log('ok  latency: same points for the same typing moment (far 300 ms), capped stamps, buzzer grace, startsAt lead');
 }
 
+// Storybook auto-reveals and frozen point values, with a near and a far (300 ms) player.
+function hintTests() {
+  const { Room } = require('../server/room.js');
+  const E = require('../js/engine.js');
+  const data = require('../data/puzzles.json');
+  let T = 2e6; const out = { near: [], far: [] };
+  const room = new Room('HINT', data, { now: () => T, rng: () => 0.42 });
+  const near = room.addPlayer('Near', m => out.near.push(m)).player, far = room.addPlayer('Far', m => out.far.push(m)).player;
+  for (let i = 0; i < 5; i++) { room.noteRtt(near, 20); room.noteRtt(far, 600); }
+  room.start(near); clearTimeout(room.timer);
+  room.roundIdx = 3; room.puzzleIdx = 0; room.beginPuzzle(0); clearTimeout(room.timer); room.clearReveals();
+  const pz = room.puzzle(), dur = pz.seconds * 1000, times = E.revealTimes(pz, room.cfg);
+  assert.equal(pz.kind, 'storyAll'); assert(times.length >= 2, 'round 4 schedules reveals');
+  assert(pz.segments.filter(s => s.given).length >= 2, 'round 4 shows key words');
+  const uniq = t => pz.targets.filter(x => x.key === t.key).length === 1;
+  // the server decides revealLeadMs ahead and tells everyone the same word and the same moment
+  const at = room.startsAt + Math.round(times[0] * dur);
+  T = at - room.cfg.revealLeadMs; const id = room.revealDue(at);
+  const rn = out.near.find(m => m.t === 'reveal'), rf = out.far.find(m => m.t === 'reveal');
+  assert(id != null && rn && rf && rn.id === id && rf.id === id && rn.at === at && rf.at === at && rn.answer === pz.targets[id].answer);
+  assert(!JSON.stringify(out.near.filter(m => m.t === 'puzzle')).includes('"answer"'));
+  const w = pz.targets[id];
+  if (uniq(w)) {
+    // far typed it 50 ms before the reveal (arrives after): still counts; near typed it after: dropped, no penalty
+    T = at + 250; room.letters(far, w.key, at - 50);
+    assert(out.far.find(m => m.t === 'solved' && m.targetId === id), 'typed before the reveal counts');
+    T = at + 260; room.letters(near, w.key, at + 100);
+    assert(out.near.find(m => m.t === 'skipped') && near.status === 'playing', 'typing a revealed word is not wrong');
+  }
+  assert.equal(room.snapshot(far).reveals.length, 1, 'rejoining clients get the reveals');
+  // frozen value: near types the first letter at 60% elapsed and the rest 2 s later; far types it all at that
+  // first moment (arriving 300 ms late). Both get the value from that first moment, below full value.
+  const u = pz.targets.find(t => t.id !== id && uniq(t) && !near.attempt.solved[t.id] && !far.attempt.solved[t.id]);
+  const t1 = room.startsAt + Math.round(0.6 * dur);
+  T = t1 + 10; room.letters(near, u.key[0], t1);
+  T = t1 + 300; room.letters(far, u.key, t1);
+  T = t1 + 2010; room.letters(near, u.key.slice(1), t1 + 2000);
+  const pn = out.near.find(m => m.t === 'solved' && m.targetId === u.id), pf = out.far.find(m => m.t === 'solved' && m.targetId === u.id);
+  const want = E.pointsFor(pz.base, (room.endsAt - t1) / dur, room.cfg);
+  assert(pn && pf && pn.points === want && pf.points === want, 'frozen at the first letter: ' + (pn && pn.points) + ' ' + (pf && pf.points) + ' want ' + want);
+  assert(want < E.pointsFor(pz.base, 1, room.cfg), 'late in the clock the value has dropped');
+  // a lone first letter holds the value only freezeMaxMs
+  const v = pz.targets.find(t => t.id !== id && t.id !== u.id && uniq(t) && !near.attempt.solved[t.id] && !room.revealAt[t.id]);
+  const t2 = t1 + 2100; T = t2 + 10; room.letters(near, v.key[0], t2); T = t2 + 3510; room.letters(near, v.key.slice(1), t2 + 3500);
+  assert.equal(out.near.find(m => m.t === 'solved' && m.targetId === v.id).points,
+    E.pointsFor(pz.base, (room.endsAt - (t2 + 3500 - room.cfg.freezeMaxMs)) / dur, room.cfg));
+  room.destroy();
+  console.log('ok  hints: round 4 key words, synchronized reveals (stamped letters before `at` count), frozen points equal for near/far');
+}
+
 (async () => {
   const { server, rooms } = createServer({ emptyRoomMs: 500 });
   await new Promise(r => server.listen(0, r));
@@ -153,6 +203,7 @@ function latencyTests() {
   assert(!rooms.has(code), 'empty room cleaned up');
   server.close();
   latencyTests();
+  hintTests();
   console.log('server tests passed: 12 puzzles,', JSON.stringify(sawTimeOrDone), 'final', st.map(s => s.name + ' ' + s.score).join(', '));
   process.exit(0);
 })().catch(e => { console.error(e); process.exit(1); });
