@@ -49,7 +49,31 @@
     vpEl.style.top = (top + st) + 'px'; vpEl.style.left = (left + sl) + 'px';
     vpEl.style.width = w + 'px'; vpEl.style.height = h + 'px';
     vpEl.style.right = vpEl.style.bottom = 'auto';
-    stage.style.setProperty('--s', Math.min(w / 640, h / 480));
+    // Portrait / narrow screens get their own stacked layout (400 logical px wide, full height).
+    // While a text field is focused (keyboard up) the layout never flips, only the height changes.
+    var typing = document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
+    var por = (typing && Math.abs(w - lastW) < 2 && lastPortrait !== null) ? lastPortrait : h > w * 1.05;
+    lastW = w; lastPortrait = por;
+    var sc, sw, sh;
+    if (por) { sw = PW; sc = w / PW; sh = Math.max(300, Math.round(h / sc)); }
+    else { sw = 640; sh = 480; sc = Math.min(w / 640, h / 480); }
+    vpEl.classList.toggle('portrait', por);
+    stage.style.width = sw + 'px'; stage.style.height = sh + 'px';
+    stage.style.margin = (-sh / 2) + 'px 0 0 ' + (-sw / 2) + 'px';
+    stage.style.setProperty('--s', sc); stage.style.setProperty('--sh', sh + 'px');
+    if (por) stage.style.setProperty('--logoS', Math.max(.6, Math.min(1.12, (sh * 0.5 - 24) / 291, (sw - 24) / 325)).toFixed(3));
+    if (sw !== SW || sh !== SH) { SW = sw; SH = sh; relayout(); }
+  }
+  var PW = 400, SW = 640, SH = 480, lastW = 0, lastPortrait = null;
+  function isPortrait() { return SW !== 640; }
+  // re-measure everything sized in px when the stage size changes (rotation, keyboard, resize)
+  function relayout() {
+    if (!birdL) return;
+    birdGeometry();
+    if (game && stage.dataset.screen === 'play') {
+      if (birdMode === 'crash' || birdMode === 'frozen') { /* keep */ } else updateBirds();
+      fitPuzzleText(); renderBox();
+    }
   }
   var kbH = 0, fullH = innerHeight;
   if (window.visualViewport) visualViewport.addEventListener('scroll', fit);
@@ -65,7 +89,7 @@
   addEventListener('resize', fit); if (window.visualViewport) visualViewport.addEventListener('resize', fit); fit();
   function setScreen(name, scene) {
     stage.dataset.screen = name;
-    stage.className = 'prof-' + P.id + ' scene-' + (scene || 'back') + (name === 'play' && kind ? ' k-' + kind : '') + (mode === 'multi' ? ' mp' : '');
+    stage.className = 'prof-' + P.id + ' scene-' + (scene || 'back') + (name === 'play' && kind ? ' k-' + kind : '') + (mode === 'multi' ? ' mp' : '') + ($('feedback').textContent ? ' fb' : '');
     if (name === 'play') focusInput();
   }
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
@@ -85,7 +109,12 @@
     $('typeText').innerHTML = esc(fillText) + '<span class="pend">' + esc(pending) + '</span><span class="caret"></span>';
     meas.font = 'bold 32px "Courier New", Courier, monospace';
     var t = fillText + pending, w = meas.measureText(t).width + t.length * 2 + 60;
-    $('typeBox').style.width = Math.max(270, Math.min(620, Math.ceil(w))) + 'px';
+    var maxW = isPortrait() ? SW - 16 : 620;
+    if (isPortrait()) {   // long type-ahead runs shrink to fit the phone width
+      var fs = 32; while (fs > 18 && w > maxW) { fs -= 2; meas.font = 'bold ' + fs + 'px "Courier New", Courier, monospace'; w = meas.measureText(t).width + t.length * 2 + 60; }
+      $('typeText').style.fontSize = fs + 'px';
+    } else $('typeText').style.fontSize = '';
+    $('typeBox').style.width = Math.max(isPortrait() ? 300 : 270, Math.min(maxW, Math.ceil(w))) + 'px';
   }
   function focusInput() {
     if (stage.dataset.screen !== 'play' || document.querySelector('.modal:not([hidden])')) return;
@@ -149,7 +178,7 @@
   function fitText(el, size, max) { el.style.fontSize = size + 'px'; while (size > 14 && el.scrollWidth > max) { size--; el.style.fontSize = size + 'px'; } }
   function renderPuzzle(p, r) {
     kind = p.kind; setScreen('play', 'play');
-    $('roundNum').textContent = r.round; $('catText').textContent = r.category; fitText($('catText'), 28, 410);
+    $('roundNum').textContent = r.round; $('catText').textContent = r.category;
     $('greenClue').innerHTML = ''; $('greenWord').innerHTML = ''; $('story').innerHTML = ''; $('clueLine').textContent = '';
     document.querySelectorAll('.obox').forEach(function (b) { b.innerHTML = ''; });
     if (p.kind === 'single') { $('greenClue').textContent = p.clue; $('greenWord').innerHTML = span(p.targets[0]); }
@@ -159,11 +188,53 @@
     } else {
       var st = $('story'), max = p.kind === 'storyAll' ? 170 : 150, size = p.kind === 'storyAll' ? 20 : 21;
       st.innerHTML = p.segments.map(function (s) { return s.t != null ? span(p.targets[s.t]) : esc(s.text); }).join('');
-      st.style.fontSize = size + 'px';
-      while (size > 14 && st.scrollHeight > max) { size--; st.style.fontSize = size + 'px'; }
     }
     $('instr').textContent = r.instruction + (p.missing ? '  (MISSING LETTERS!)' : '');
     markNext();
+    fitPuzzleText();
+  }
+  // Landscape keeps the original fixed sizes; clear anything the portrait fitter set inline.
+  function landscapeFit(p) {
+    ['greenClue', 'greenWord', 'clueLine', 'instr', 'story'].forEach(function (id) { $(id).style.fontSize = ''; });
+    document.querySelectorAll('.obox').forEach(function (b) { b.style.fontSize = ''; });
+    var ob = $('orangeBoxes'); ob.style.top = ''; ob.classList.remove('row3');
+    fitText($('catText'), 28, 410);
+    if (p.kind === 'story' || p.kind === 'storyAll') {
+      var st = $('story'), max = p.kind === 'storyAll' ? 170 : 150, size = p.kind === 'storyAll' ? 20 : 21;
+      st.style.fontSize = size + 'px';
+      while (size > 14 && st.scrollHeight > max) { size--; st.style.fontSize = size + 'px'; }
+    }
+  }
+  // Portrait: make the clue and the scrambled words as big as the space allows, never overflowing.
+  function fitPuzzleText() {
+    if (!game) return;
+    var p = game.currentPuzzle && game.currentPuzzle(); if (!p) return;
+    if (!isPortrait()) { landscapeFit(p); return; }
+    var cat = $('catText'); fitText(cat, 24, Math.max(120, $('catBox').clientWidth - 16));
+    var gb = $('greenBox');
+    var fits = function () { return gb.scrollHeight <= gb.clientHeight + 1 && gb.scrollWidth <= gb.clientWidth + 1; };
+    function shrink(el, hi, lo, ok) {   // largest size in [lo, hi] that passes ok()
+      var a = lo, b = hi; el.style.fontSize = hi + 'px'; if (ok()) return hi;
+      while (b - a > 1) { var m = (a + b) >> 1; el.style.fontSize = m + 'px'; if (ok()) a = m; else b = m; }
+      el.style.fontSize = a + 'px'; return a;
+    }
+    if (p.kind === 'single') {
+      var gw = $('greenWord'), gc = $('greenClue'), inner = gb.clientWidth - 24;
+      gc.style.fontSize = '15px';
+      var ws = shrink(gw, 76, 20, function () { return gw.scrollWidth <= inner && gb.scrollHeight <= gb.clientHeight + 1; });
+      shrink(gc, Math.min(30, Math.max(16, Math.round(ws * 0.45))), 12, fits);
+    } else if (p.kind === 'multi') {
+      var cl = $('clueLine'), ob = $('orangeBoxes');
+      shrink(cl, 24, 12, function () { return cl.scrollHeight <= 56; });
+      ob.style.top = (cl.offsetTop + cl.offsetHeight + 10) + 'px';
+      ob.classList.toggle('row3', ob.clientHeight < 2 * 50 + 12);    // short on space: one row of three
+      document.querySelectorAll('.obox').forEach(function (b) {
+        shrink(b, 40, 12, function () { return b.scrollWidth <= b.clientWidth + 1 && b.scrollHeight <= b.clientHeight + 1 && parseFloat(b.style.fontSize) <= b.clientHeight * 0.62; });
+      });
+    } else {
+      shrink($('story'), p.kind === 'storyAll' ? 34 : 36, 11, fits);
+    }
+    var ins = $('instr'); shrink(ins, 13, 9, function () { return ins.scrollWidth <= ins.clientWidth + 1; });
   }
   function markWord(id, cls) {
     var p = game.currentPuzzle(), t = p && p.targets[id]; if (!t || !t.answer) return;
@@ -179,8 +250,10 @@
   var birdL = $('birdL'), birdR = $('birdR'), crash = $('crashSprite'), birdMode = 'walk';
   var L0 = 2, R0 = 596, ML = 272, MR = 326, FW = 42;
   function birdGeometry() {          // works for either profile's sprite size
-    FW = birdL.offsetWidth || 42; L0 = P.classic ? 2 : 16; R0 = 640 - L0 - FW;
-    ML = P.classic ? 272 : 320 - FW + 4; MR = P.classic ? 326 : 316;
+    var W = SW, half = W / 2;
+    FW = birdL.offsetWidth || 42; L0 = P.classic ? 2 : 16; R0 = W - L0 - FW;
+    ML = P.classic ? half - 48 : half - FW + 4; MR = P.classic ? half + 6 : half - 4;
+    if (W !== 640) { L0 = 18; R0 = W - L0 - FW; ML = half - FW * 1.15; MR = half + FW * 0.15; }   // portrait: birds are drawn 1.3x
   }
   function placeBirds(f) { f = Math.max(0, Math.min(1, f)); birdL.style.left = (L0 + (ML - L0) * f) + 'px'; birdR.style.left = (R0 + (MR - R0) * f) + 'px'; }
   function resetBirds() {
@@ -217,7 +290,11 @@
     later(function () { crash.className = ''; dropBirds(); }, 380);
   }
 
-  function setFeedback(text, cls) { var f = $('feedback'); f.textContent = text; f.className = cls || ''; }
+  function setFeedback(text, cls) {
+    var f = $('feedback'); f.textContent = text; f.className = cls || ''; stage.classList.toggle('fb', !!text);
+    f.style.fontSize = '';
+    if (isPortrait() && text) { var fs = 19; while (fs > 10 && f.scrollWidth > f.clientWidth + 1) { fs--; f.style.fontSize = fs + 'px'; } }
+  }
   function setScore(n, bump) { var el = $('scoreNum'); el.textContent = n; if (bump) { el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump'); } }
 
   // ---------- multiplayer widgets ----------

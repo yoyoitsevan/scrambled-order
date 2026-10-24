@@ -260,3 +260,102 @@ button { font-family: inherit; cursor: pointer; }
 @keyframes legL { from { transform: rotate(-14deg); } to { transform: rotate(10deg); } }
 @keyframes legR { from { transform: rotate(10deg); } to { transform: rotate(-14deg); } }
 .mp #dancers .mascot { width: 48px; height: 72px; }
+
+/* ---------- v6: portrait / narrow phones ----------
+   ui.js adds .portrait to #viewport when the screen is taller than wide. The stage is then
+   400 logical px wide and as tall as the visible area (--sh), so it fills the screen inside the
+   safe areas and above the on-screen keyboard. Landscape/desktop never matches these rules. */
+#viewport.portrait #stage { box-shadow: none; }
+#viewport.portrait #bgTop, #viewport.portrait #titleSide, #viewport.portrait #fanNote,
+#viewport.portrait #cdLabel, #viewport.portrait #cdTip, #viewport.portrait #introTitle,
+#viewport.portrait #introCat, #viewport.portrait #progress { width: 100%; }
+#viewport.portrait .scene-back #bgTop { height: 50%; background-size: cover; background-position: center; }
+#viewport.portrait .scene-back #bottom { top: 50%; }
+#viewport.portrait .scene-lobby #bgTop { height: 46%; background-size: cover; background-position: center; }
+#viewport.portrait .scene-lobby #bottom { top: 46%; }
+#viewport.portrait .scene-play #bgTop { height: 100%; background-size: cover; background-position: center; }
+
+/* title */
+#viewport.portrait #logoFrame { left: 50%; top: 25%; margin: 0; transform: translate(-50%, -50%) scale(var(--logoS, 1)); }
+#viewport.portrait #titleSide { top: 50%; height: 50%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding-bottom: 22px; box-sizing: border-box; }
+#viewport.portrait #btnPlay, #viewport.portrait #btnMulti { position: static; width: 290px; height: 62px; font-size: 27px; }
+#viewport.portrait #titleRow, #viewport.portrait #bestScore { position: static; width: 100%; }
+#viewport.portrait #titleRow { flex-wrap: wrap; gap: 8px; padding: 0 8px; box-sizing: border-box; }
+#viewport.portrait #fanNote { top: auto; bottom: 8px; padding: 0 90px 0 8px; box-sizing: border-box; text-align: left; }
+
+/* countdown + round intro: stacked and centred */
+#viewport.portrait #stage[data-screen="countdown"] #screen-countdown,
+#viewport.portrait #stage[data-screen="intro"] #screen-intro { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; padding: 0 14px; box-sizing: border-box; }
+#viewport.portrait #screen-countdown > *, #viewport.portrait #screen-intro > * { position: static; left: auto; top: auto; margin: 0; }
+#viewport.portrait #introInstr { width: 100%; }
+#viewport.portrait #introCat { font-size: 30px; }
+#viewport.portrait #cdSec { flex: none; }
+
+/* play: top bar, tightrope, round + category, clue, words, typebox pinned to the bottom */
+#viewport.portrait #clockNum { left: 12px; top: 10px; font-size: 24px; }
+#viewport.portrait #scoreBox { left: auto; right: 8px; top: 4px; width: 100px; height: 44px; padding-top: 2px; }
+#viewport.portrait #scoreBox .lbl { font-size: 10px; } #viewport.portrait #scoreNum { font-size: 22px; }
+#viewport.portrait #stage[data-screen="play"] #btnHelp { right: 114px; top: 6px; bottom: auto; width: 38px; height: 38px; background-size: 38px 38px; }
+#viewport.portrait #stage[data-screen="play"] #btnMute { right: 160px; top: 9px; bottom: auto; }
+#viewport.portrait #wire { left: 8px; right: 8px; width: auto; top: 100px; }
+#viewport.portrait #wire .post { height: 34px; }
+#viewport.portrait .bird { top: 59px; scale: 1.3; }
+#viewport.portrait .bird.fall-l .bw { animation-name: fallLP; } #viewport.portrait .bird.fall-r .bw { animation-name: fallRP; }
+@keyframes fallLP { 0% { transform: scale(1.15); } 14% { transform: scale(1.15) translate(-8px,-14px) rotate(-25deg); } 100% { transform: scale(1.15) translate(-60px, 1100px) rotate(-320deg); } }
+@keyframes fallRP { 0% { transform: scale(1.15); } 14% { transform: scale(1.15) translate(8px,-14px) rotate(25deg); } 100% { transform: scale(1.15) translate(60px, 1100px) rotate(320deg); } }
+#viewport.portrait #crashSprite { left: 50%; margin-left: -48px; top: 50px; scale: 1.3; }
+#viewport.portrait #progress { left: 0; top: 108px; font-size: 11px; }
+#viewport.portrait .mp #progress { display: none; }
+#viewport.portrait .mp #mpStrip { left: 8px; right: 8px; width: auto; top: 106px; height: 20px; flex-wrap: nowrap; justify-content: center; }
+#viewport.portrait #roundCircle { left: 8px; top: 130px; width: 46px; height: 46px; }
+#viewport.portrait #roundNum { font-size: 26px; }
+#viewport.portrait #catBox { left: 66px; right: 10px; width: auto; top: 133px; height: 40px; }
+#viewport.portrait #catText { font-size: 24px; }
+#viewport.portrait #greenBox, #viewport.portrait #stage.k-single #greenBox, #viewport.portrait #stage.k-storyAll #greenBox {
+  left: 8px; right: 8px; width: auto; top: 186px; bottom: 98px; height: auto; padding: 8px 12px; overflow: hidden; }
+#viewport.portrait #greenClue { font-size: 18px; }
+#viewport.portrait #greenWord { margin-top: 10px; letter-spacing: 3px; white-space: nowrap; }
+#viewport.portrait #story, #viewport.portrait #stage.k-storyAll #story { line-height: 1.55; }
+#viewport.portrait .scr { text-underline-offset: 3px; }
+#viewport.portrait #clueLine { left: 10px; right: 10px; width: auto; top: 184px; font-size: 19px; line-height: 1.25; }
+#viewport.portrait #stage.k-multi #orangeBoxes { display: grid; position: absolute; left: 10px; right: 10px; top: 240px; bottom: 100px;
+  grid-template-columns: 1fr 1fr; grid-template-rows: repeat(2, minmax(0, 68px)); gap: 12px 10px; align-content: center; }
+#viewport.portrait .obox, #viewport.portrait .obox[data-i] { position: static; width: auto; height: 100%; min-height: 0; letter-spacing: 2px; white-space: nowrap; overflow: hidden; }
+#viewport.portrait .obox[data-i="2"] { grid-column: 1 / span 2; justify-self: center; width: calc(50% - 5px); }
+#viewport.portrait #stage.k-multi #orangeBoxes.row3 { grid-template-columns: repeat(3, 1fr); grid-template-rows: minmax(0, 64px); gap: 6px; }
+#viewport.portrait #orangeBoxes.row3 .obox[data-i="2"] { grid-column: auto; justify-self: stretch; width: auto; }
+#viewport.portrait #orangeBoxes.row3 .obox { letter-spacing: 1px; }
+#viewport.portrait #instr { left: 6px; right: 6px; width: auto; top: auto; bottom: 72px; font-size: 13px; white-space: nowrap; overflow: hidden; }
+#viewport.portrait #feedback { left: 0; width: 100%; top: auto; bottom: 70px; height: 24px; line-height: 24px; font-size: 19px; }
+#viewport.portrait #stage.fb #instr { visibility: hidden; }
+#viewport.portrait #typeBox { top: auto; bottom: 8px; height: 58px; }
+#viewport.portrait #standings { left: 16px; right: 16px; width: auto; top: 120px; }
+
+/* end */
+#viewport.portrait #stage[data-screen="end"] #screen-end { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 10px 12px 46px; box-sizing: border-box; }
+#viewport.portrait #screen-end > * { position: static; margin: 0; flex: none; }
+#viewport.portrait #endPanel { width: 100%; height: auto; padding-bottom: 10px; }
+#viewport.portrait #btnAgain, #viewport.portrait #btnToLobby { width: 280px; height: 56px; }
+#viewport.portrait #finalList { margin: 4px 14px 0; }
+
+/* lobby + room */
+#viewport.portrait .panel { left: 10px; right: 10px; top: 10px; bottom: 50px; width: auto; height: auto; padding: 12px 14px; overflow-y: auto; }
+#viewport.portrait #lobbyJoin label input { display: block; margin: 6px auto 0; width: 82%; box-sizing: border-box; }
+#viewport.portrait #btnLobbyBack { position: static; margin-top: 4px; }
+#viewport.portrait .panel h2 { margin: 2px 0 10px; }
+#viewport.portrait .msg { min-height: 22px; margin: 8px 0 4px; }
+#viewport.portrait .panel .or { margin: 12px 0 4px; }
+#viewport.portrait #lobbyRoom { left: 8px; right: 8px; top: 8px; width: auto; display: flex; flex-direction: column; padding: 10px 12px; overflow: hidden; }
+#viewport.portrait #roomHead { flex-wrap: wrap; gap: 8px; }
+#viewport.portrait #roomCols { flex-direction: column; flex: 1; height: auto; min-height: 0; gap: 8px; }
+#viewport.portrait #playerBox { width: auto; max-height: 34%; overflow-y: auto; flex: none; }
+#viewport.portrait #playerList { line-height: 1.5; }
+#viewport.portrait #chatBox { min-height: 110px; }
+#viewport.portrait #chatInput { font-size: 16px; }
+#viewport.portrait #roomFoot { flex-wrap: wrap; gap: 8px 10px; margin-top: 8px; }
+#viewport.portrait #startHint { order: -1; flex-basis: 100%; text-align: center; }
+#viewport.portrait #btnStart { flex: 1; }
+
+/* modals */
+#viewport.portrait .modal .card { width: calc(100% - 20px); max-height: calc(100% - 20px); }
+#viewport.portrait .modal .set { margin: 8px 6px; }

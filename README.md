@@ -23,6 +23,8 @@ The title can be changed in `js/profile.js`, or with `GAME_TITLE="My Title" npm 
 
 Also included: How to Play, Settings, mute, and local high scores.
 
+**Phones:** in portrait (or any screen taller than wide) the game switches to a stacked layout that fills the screen: clock and score on top, the tightrope birds, the round and category, the clue box with the scrambled words sized to fit, and the typebox pinned just above the on-screen keyboard. Landscape and desktop keep the classic 640x480 stage.
+
 ## iOS and Android apps
 The `mobile/` folder wraps this same client as native apps with Capacitor (app id
 `com.yoyoitsevan.scrambledorder`). Solo works offline; multiplayer uses the hosted server. See
@@ -34,6 +36,7 @@ The `mobile/` folder wraps this same client as native apps with Capacitor (app i
 * **classic** (private, personal use): `PROFILE=classic npm start` uses the separate `classic/` folder (original extracted assets, `classic/profile.js`, `classic/classic.css`). It is **never** included in the public zip or the Docker image (see `.dockerignore`). `tools/package.py` builds both zips, and `tools/check_public.py` hash-checks that no classic asset is in the public bundle or the Docker context.
 
 ## Tests
+* `python3 tools/e2e_portrait.py` checks the portrait layout on iPhone SE, iPhone 15/16 and Pixel sizes with the keyboard open (needs the server on :8780).
 * `npm test`: engine unit tests and server tests (WebSocket clients, a full game, reconnects, host migration, and a check that public builds don't serve classic files).
 * Browser tests (Python Playwright + Chrome):
   * `python tools/e2e.py http://localhost:8080/`: desktop solo.
