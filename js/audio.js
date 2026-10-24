@@ -122,6 +122,7 @@
     counts[name] = (counts[name] || 0) + 1;
     if (muted) return;
     if (playSample(name)) return;
+    if (SAMPLES && SAMPLES.only) return;   // classic: only the original samples, no added synth effects
     synth(name);
   }
   var tickN = 0;
@@ -131,7 +132,23 @@
     if (playSample('clock', odd ? 0.72 : 1.0)) return;
     synth(odd ? 'tock' : 'tick');
   }
-  function whistle() { window.OOOAudio.whistles = (window.OOOAudio.whistles || 0) + 1; if (!muted) synth('whistle'); }
+  function whistle() {
+    window.OOOAudio.whistles = (window.OOOAudio.whistles || 0) + 1; if (muted) return;
+    if (SAMPLES && SAMPLES.only) { classicWhistle(); return; }
+    synth('whistle');
+  }
+  // classic: the original-build slide whistle exactly as it was (pure wobbling sine, no breath noise)
+  function classicWhistle() {
+    var c = actx(); if (!c) return;
+    var t = c.currentTime, dur = 1.15, osc = c.createOscillator(), g = c.createGain(), lfo = c.createOscillator(), lg = c.createGain();
+    osc.type = 'sine'; osc.frequency.setValueAtTime(2300, t);
+    osc.frequency.exponentialRampToValueAtTime(1500, t + 0.18); osc.frequency.exponentialRampToValueAtTime(220, t + dur);
+    lfo.frequency.value = 9; lg.gain.value = 40; lfo.connect(lg); lg.connect(osc.frequency);
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.32, t + 0.04);
+    g.gain.setValueAtTime(0.32, t + dur - 0.2); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    osc.connect(g); g.connect(c.destination);
+    osc.start(t); lfo.start(t); osc.stop(t + dur + 0.05); lfo.stop(t + dur + 0.05);
+  }
   function themeStart() {
     if (muted) return;
     var a = sample('theme');
