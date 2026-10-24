@@ -26,10 +26,42 @@
   function showBest() { var b = best(); $('bestScore').textContent = b ? 'BEST SOLO SCORE: ' + b : ''; }
 
   // ---------- layout ----------
+  // The stage is fitted into the *visible* area: inside the safe areas (notch, home bar) and above the
+  // on-screen keyboard, so the typebox is never hidden behind the keyboard on phones.
+  var vpEl = $('viewport');
+  var saProbe = document.createElement('div');
+  saProbe.style.cssText = 'position:fixed;left:0;top:0;width:0;height:0;visibility:hidden;pointer-events:none;' +
+    'padding:var(--sa-top) var(--sa-right) var(--sa-bottom) var(--sa-left)';
+  document.body.appendChild(saProbe);
+  function inset(side) {
+    var v = parseFloat(getComputedStyle(saProbe)['padding' + side.charAt(0).toUpperCase() + side.slice(1)]);
+    return isFinite(v) ? v : 0;
+  }
   function fit() {
     var vv = window.visualViewport, w = vv ? vv.width : innerWidth, h = vv ? vv.height : innerHeight;
+    var top = vv ? vv.offsetTop : 0, left = vv ? vv.offsetLeft : 0;
+    if (!kbH) fullH = Math.max(innerHeight, h);
+    // native app keyboard (Capacitor): normally the web view shrinks; if it didn't, make room ourselves
+    if (kbH && fullH - h < kbH * 0.5) h -= kbH;
+    var kb = kbH > 0 || (vv && innerHeight - vv.height > 120);   // keyboard open: it covers the bottom inset
+    var st = inset('top'), sb = kb ? 0 : inset('bottom'), sl = inset('left'), sr = inset('right');
+    w = Math.max(1, w - sl - sr); h = Math.max(1, h - st - sb);
+    vpEl.style.top = (top + st) + 'px'; vpEl.style.left = (left + sl) + 'px';
+    vpEl.style.width = w + 'px'; vpEl.style.height = h + 'px';
+    vpEl.style.right = vpEl.style.bottom = 'auto';
     stage.style.setProperty('--s', Math.min(w / 640, h / 480));
   }
+  var kbH = 0, fullH = innerHeight;
+  if (window.visualViewport) visualViewport.addEventListener('scroll', fit);
+  ['keyboardWillShow', 'keyboardDidShow'].forEach(function (ev) {
+    addEventListener(ev, function (e) { kbH = (e && e.keyboardHeight) || 0; fit(); setTimeout(fit, 120); });
+  });
+  ['keyboardWillHide', 'keyboardDidHide'].forEach(function (ev) { addEventListener(ev, function () { kbH = 0; fit(); setTimeout(fit, 120); }); });
+  if (N && N.Net && N.Net.isApp()) {
+    try { window.Capacitor.Plugins.Keyboard.setAccessoryBarVisible({ isVisible: false }); } catch (e) {}
+    document.documentElement.classList.add('native-app');
+  }
+  addEventListener('orientationchange', function () { setTimeout(fit, 250); });
   addEventListener('resize', fit); if (window.visualViewport) visualViewport.addEventListener('resize', fit); fit();
   function setScreen(name, scene) {
     stage.dataset.screen = name;
@@ -332,7 +364,7 @@
     if (!room) return;
     $('lobbyJoin').hidden = true; $('lobbyRoom').hidden = false;
     $('roomCode').textContent = room.code;
-    var link = location.origin + location.pathname.replace(/index\.html$/, '') + '?room=' + room.code;
+    var link = N.Net.shareBase() + '?room=' + room.code;
     $('roomLink').textContent = link; $('roomLink').dataset.link = link;
     $('playerCount').textContent = room.players.length + '/' + room.maxPlayers;
     $('playerList').innerHTML = room.players.map(function (p) {
@@ -357,6 +389,9 @@
     switch (m.t) {
       case '_status':
         if (m.status === 'closed' && room) { lobbyMsg('Connection lost - reconnecting...'); if (stage.dataset.screen === 'play') setFeedback('RECONNECTING...', 'time'); }
+        if (m.status === 'connecting' && !room) setTimeout(function () {   // hosted servers can be asleep
+          if (net && net.status === 'connecting' && !room) lobbyMsg('Connecting to the game server... it can take up to a minute to wake up.');
+        }, 1500);
         if (m.status === 'open') lobbyMsg(''); break;
       case 'joined':
         myId = m.you.id; room = m.room; lobbyMsg(''); A.play('join');

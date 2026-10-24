@@ -1,0 +1,29 @@
+name: Android debug APK
+on:
+  workflow_dispatch:
+  push:
+    paths: ['mobile/**', 'index.html', 'css/**', 'js/**', 'assets/**', 'data/**', '.github/workflows/android.yml']
+  pull_request:
+    paths: ['mobile/**', 'index.html', 'css/**', 'js/**', 'assets/**', 'data/**', '.github/workflows/android.yml']
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: mobile } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: mobile/package-lock.json }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 21 }
+      - uses: gradle/actions/setup-gradle@v4
+      - run: npm ci
+      - run: npm run build
+      - run: npx cap sync android
+      - run: ./gradlew assembleDebug --no-daemon
+        working-directory: mobile/android
+      - run: cp android/app/build/outputs/apk/debug/app-debug.apk scrambled-order-debug.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scrambled-order-debug-apk
+          path: mobile/scrambled-order-debug.apk
+          if-no-files-found: error

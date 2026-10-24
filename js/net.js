@@ -10,8 +10,17 @@
     this.retry = 0; this.session = null; this.status = 'idle';
     try { this.session = JSON.parse(sessionStorage.getItem('ooo.session') || 'null'); } catch (e) {}
   }
-  Net.available = function () { return /^https?:$/.test(location.protocol) && 'WebSocket' in window; };
-  Net.prototype.url = function () { return (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws'; };
+  // Inside the iOS/Android app (Capacitor) the page is served from the device, so multiplayer talks to
+  // the hosted server. In a browser it stays same-origin. window.OOO_SERVER overrides both (testing).
+  var APP_WS = 'wss://scrambled-order.onrender.com/ws', APP_WEB = 'https://scrambled-order.onrender.com/';
+  Net.isApp = function () { var C = window.Capacitor; return !!(C && typeof C.isNativePlatform === 'function' && C.isNativePlatform()); };
+  Net.remote = function () { return window.OOO_SERVER || (Net.isApp() ? APP_WS : null); };
+  Net.available = function () { return 'WebSocket' in window && (!!Net.remote() || /^https?:$/.test(location.protocol)); };
+  Net.shareBase = function () {   // base URL for "join my room" links (the app's own origin is not reachable by friends)
+    if (Net.isApp()) return APP_WEB;
+    return location.origin + location.pathname.replace(/index\.html$/, '');
+  };
+  Net.prototype.url = function () { return Net.remote() || ((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws'); };
   Net.prototype.on = function (fn) { this.handlers.push(fn); };
   Net.prototype._emit = function (m) { this.handlers.forEach(function (h) { h(m); }); };
   Net.prototype.connect = function () {

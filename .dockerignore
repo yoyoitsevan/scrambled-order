@@ -5,3 +5,5 @@ screenshots
 .git
 **/__pycache__
 dist
+mobile
+.github

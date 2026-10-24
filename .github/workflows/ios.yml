@@ -1,0 +1,30 @@
+name: iOS simulator build
+on:
+  workflow_dispatch:
+  push:
+    paths: ['mobile/**', 'index.html', 'css/**', 'js/**', 'assets/**', 'data/**', '.github/workflows/ios.yml']
+  pull_request:
+    paths: ['mobile/**', 'index.html', 'css/**', 'js/**', 'assets/**', 'data/**', '.github/workflows/ios.yml']
+jobs:
+  simulator:
+    runs-on: macos-26
+    defaults: { run: { working-directory: mobile } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: mobile/package-lock.json }
+      - run: xcodebuild -version
+      - run: npm ci
+      - run: npm run build
+      - run: npx cap sync ios
+      - name: Build for the iOS Simulator (unsigned)
+        working-directory: mobile/ios/App
+        run: |
+          xcodebuild -project App.xcodeproj -scheme App -configuration Debug \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
+      - run: cd ios/App/build/Build/Products/Debug-iphonesimulator && zip -qr ../../../../../../scrambled-order-simulator.zip App.app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scrambled-order-ios-simulator-app
+          path: mobile/scrambled-order-simulator.zip

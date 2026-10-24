@@ -23,6 +23,12 @@ The title can be changed in `js/profile.js`, or with `GAME_TITLE="My Title" npm 
 
 Also included: How to Play, Settings, mute, and local high scores.
 
+## iOS and Android apps
+The `mobile/` folder wraps this same client as native apps with Capacitor (app id
+`com.yoyoitsevan.scrambledorder`). Solo works offline; multiplayer uses the hosted server. See
+`mobile/README.md` for building, CI (debug APK + iOS simulator build) and store publishing. The
+`mobile/` folder is excluded from the Docker image.
+
 ## Build profiles
 * **public** (default): `js/profile.js`, with art in `assets/svg/` + `js/art.js` and synthesized sound in `js/audio.js`. It ships no sampled audio or raster art.
 * **classic** (private, personal use): `PROFILE=classic npm start` uses the separate `classic/` folder (original extracted assets, `classic/profile.js`, `classic/classic.css`). It is **never** included in the public zip or the Docker image (see `.dockerignore`). `tools/package.py` builds both zips, and `tools/check_public.py` hash-checks that no classic asset is in the public bundle or the Docker context.
