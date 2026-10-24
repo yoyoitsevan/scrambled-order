@@ -1,0 +1,14 @@
+{
+  "name": "scrambled-order",
+  "version": "5.0.0",
+  "private": true,
+  "description": "Scrambled Order: a fan-inspired, original word-scramble game show. Solo play in the browser plus multiplayer rooms.",
+  "main": "server/server.js",
+  "scripts": {
+    "start": "node server/server.js",
+    "test": "node tools/test-engine.js && node tools/test-server.js",
+    "build-data": "python3 tools/build_data.py"
+  },
+  "engines": { "node": ">=18" },
+  "dependencies": { "express": "^4.21.2", "ws": "^8.18.0" }
+}

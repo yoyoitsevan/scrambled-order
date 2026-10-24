@@ -1,0 +1,335 @@
+{
+ "_readme": "One category per set; the game picks one set per round and 3 of its items (CONFIG.puzzlesPerRound). Round 1: {clue, answer} (5+ letters). Round 2: {clue, answers:[3 words of 5+ letters]} with different first three letters. Round 3: {story} with [Bracketed Phrases]; words of 4+ letters inside the brackets get scrambled. Round 4: {story}, a 10-20 word passage; every word of 4+ letters is scrambled and solved in order. Any item may set \"seconds\" (default: round base + 3 s per extra word). The engine scrambles; don't do it by hand. Afterwards run: python3 tools/build_data.py && node tools/test-engine.js (checks these rules).",
+ "rounds": [
+  {
+   "round": 1,
+   "sets": [
+    {
+     "category": "Around the World",
+     "items": [
+      {
+       "clue": "This country is shaped like a tall boot.",
+       "answer": "ITALY"
+      },
+      {
+       "clue": "The great sandy desert stretching across North Africa.",
+       "answer": "SAHARA"
+      },
+      {
+       "clue": "Its flag shows a red maple leaf.",
+       "answer": "CANADA"
+      },
+      {
+       "clue": "The mighty river that flows through the South American rainforest.",
+       "answer": "AMAZON"
+      },
+      {
+       "clue": "Home of the ancient pyramids at Giza.",
+       "answer": "EGYPT"
+      }
+     ]
+    },
+    {
+     "category": "In the Kitchen",
+     "items": [
+      {
+       "clue": "It whistles when the water for your tea is ready.",
+       "answer": "KETTLE"
+      },
+      {
+       "clue": "Bread goes in pale and pops out golden.",
+       "answer": "TOASTER"
+      },
+      {
+       "clue": "A wire tool for beating eggs until they are fluffy.",
+       "answer": "WHISK"
+      },
+      {
+       "clue": "A bowl full of holes for draining noodles.",
+       "answer": "COLANDER"
+      },
+      {
+       "clue": "The flat tool you use to flip a pancake.",
+       "answer": "SPATULA"
+      }
+     ]
+    },
+    {
+     "category": "Animal Kingdom",
+     "items": [
+      {
+       "clue": "This bird cannot fly, but it swims like a torpedo in icy seas.",
+       "answer": "PENGUIN"
+      },
+      {
+       "clue": "The tallest animal on the African plains.",
+       "answer": "GIRAFFE"
+      },
+      {
+       "clue": "Eight arms, three hearts and a cloud of ink.",
+       "answer": "OCTOPUS"
+      },
+      {
+       "clue": "A prickly garden visitor that curls up into a ball.",
+       "answer": "HEDGEHOG"
+      },
+      {
+       "clue": "No land animal can outrun this spotted cat.",
+       "answer": "CHEETAH"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "round": 2,
+   "sets": [
+    {
+     "category": "Name Three",
+     "items": [
+      {
+       "clue": "Things you might find at the beach",
+       "answers": [
+        "SEASHELL",
+        "UMBRELLA",
+        "SANDCASTLE"
+       ]
+      },
+      {
+       "clue": "Colors of the rainbow",
+       "answers": [
+        "ORANGE",
+        "VIOLET",
+        "YELLOW"
+       ]
+      },
+      {
+       "clue": "Planets in our solar system",
+       "answers": [
+        "SATURN",
+        "JUPITER",
+        "MERCURY"
+       ]
+      },
+      {
+       "clue": "Things that soar through the sky",
+       "answers": [
+        "BALLOON",
+        "AIRPLANE",
+        "EAGLE"
+       ]
+      },
+      {
+       "clue": "Breakfast favorites",
+       "answers": [
+        "PANCAKE",
+        "OATMEAL",
+        "WAFFLE"
+       ]
+      }
+     ]
+    },
+    {
+     "category": "Fun and Games",
+     "items": [
+      {
+       "clue": "Instruments in an orchestra",
+       "answers": [
+        "VIOLIN",
+        "TRUMPET",
+        "CLARINET"
+       ]
+      },
+      {
+       "clue": "Found on a playground",
+       "answers": [
+        "SWING",
+        "SLIDE",
+        "SEESAW"
+       ]
+      },
+      {
+       "clue": "Party supplies",
+       "answers": [
+        "BALLOON",
+        "STREAMER",
+        "CONFETTI"
+       ]
+      },
+      {
+       "clue": "Inside a board game box",
+       "answers": [
+        "SPINNER",
+        "CARDS",
+        "TIMER"
+       ]
+      },
+      {
+       "clue": "Tools in a toolbox",
+       "answers": [
+        "HAMMER",
+        "WRENCH",
+        "SCREWDRIVER"
+       ]
+      }
+     ]
+    },
+    {
+     "category": "Mother Nature",
+     "items": [
+      {
+       "clue": "Kinds of trees",
+       "answers": [
+        "MAPLE",
+        "BIRCH",
+        "WILLOW"
+       ]
+      },
+      {
+       "clue": "Stormy weather",
+       "answers": [
+        "THUNDER",
+        "DRIZZLE",
+        "BLIZZARD"
+       ]
+      },
+      {
+       "clue": "Flowers in the garden",
+       "answers": [
+        "TULIP",
+        "DAISY",
+        "ORCHID"
+       ]
+      },
+      {
+       "clue": "Creatures of the ocean",
+       "answers": [
+        "STARFISH",
+        "LOBSTER",
+        "JELLYFISH"
+       ]
+      },
+      {
+       "clue": "Big wild cats",
+       "answers": [
+        "JAGUAR",
+        "LEOPARD",
+        "PANTHER"
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "round": 3,
+   "sets": [
+    {
+     "category": "History Mysteries",
+     "items": [
+      {
+       "story": "In 1969, [Neil Armstrong] became the first person to walk on the [Moon]."
+      },
+      {
+       "story": "The [Wright Brothers] made their first powered flight near [Kitty Hawk] in 1903."
+      },
+      {
+       "story": "The [Statue of Liberty] was a gift to the [United States] from France."
+      },
+      {
+       "story": "[Benjamin Franklin] flew a kite in a storm to learn about [lightning]."
+      },
+      {
+       "story": "The [Titanic] sank in 1912 after striking a giant [iceberg] in the [North Atlantic]."
+      }
+     ]
+    },
+    {
+     "category": "Science Class",
+     "items": [
+      {
+       "story": "Green plants turn [sunlight] into food and give off [fresh oxygen] for us to breathe."
+      },
+      {
+       "story": "Our [solar system] has eight [planets] circling one bright star."
+      },
+      {
+       "story": "Leave a tray of water in the [freezer] overnight and you get [frozen cubes]."
+      },
+      {
+       "story": "Earth makes one full [spin] every day, which gives us [morning] and [midnight]."
+      },
+      {
+       "story": "A [rainbow] appears when [sunlight] shines through tiny [water droplets]."
+      }
+     ]
+    },
+    {
+     "category": "Around Town",
+     "items": [
+      {
+       "story": "We bought warm bread at the [corner bakery] before catching the [city trolley]."
+      },
+      {
+       "story": "Kids splashed in the [public pool] all afternoon while the [lifeguard] watched."
+      },
+      {
+       "story": "The [fire station] keeps its big [shiny trucks] ready for any alarm."
+      },
+      {
+       "story": "Every Saturday the [farmers market] sells [clover honey] and sweet corn."
+      },
+      {
+       "story": "Our town [library] lends books, movies and even [telescopes]."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "round": 4,
+   "sets": [
+    {
+     "category": "Tall Tales",
+     "items": [
+      {
+       "story": "Grandpa swears a river trout once leaped clear over his rowboat and stole his sandwich."
+      },
+      {
+       "story": "Every morning our rooster crows twice, then naps on the porch until lunch arrives."
+      },
+      {
+       "story": "The night the power failed, we told ghost stories by candlelight and nobody slept."
+      },
+      {
+       "story": "My little sister built a blanket fort so large that the family cat moved in for good."
+      },
+      {
+       "story": "Snow fell all weekend, so the whole street held a giant snowball battle in the park."
+      }
+     ]
+    },
+    {
+     "category": "Travel Diary",
+     "items": [
+      {
+       "story": "We packed sandwiches, maps and sunscreen, then drove north to watch whales leap beside the cliffs."
+      },
+      {
+       "story": "Our train rolled through quiet mountain towns while snow drifted past the frosty windows."
+      },
+      {
+       "story": "At the harbor, fishing boats bobbed in the waves as seagulls begged loudly for scraps."
+      },
+      {
+       "story": "The desert campsite was silent until a curious coyote sniffed around our tent at midnight."
+      },
+      {
+       "story": "On the last day of vacation, we built a sandcastle taller than our father."
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

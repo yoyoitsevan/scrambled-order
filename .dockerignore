@@ -1,0 +1,7 @@
+node_modules
+classic
+screenshots
+*.zip
+.git
+**/__pycache__
+dist

@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#3a1fbf">
+<title>Scrambled Order</title>
+<link rel="icon" href="assets/svg/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="css/style.css">
+<script src="js/profile.js"></script>
+</head>
+<body>
+<div id="viewport">
+  <div id="stage" class="scene-back" data-screen="title">
+    <div id="bgTop"></div>
+    <div id="bottom"></div>
+
+    <!-- TITLE -->
+    <section id="screen-title" class="screen">
+      <div id="logoFrame"></div>
+      <div id="titleSide">
+        <button id="btnPlay" class="bigbtn">PLAY SOLO</button>
+        <button id="btnMulti" class="bigbtn alt">MULTIPLAYER</button>
+        <div id="titleRow">
+          <button class="chip" id="btnHow">HOW TO PLAY</button>
+          <button class="chip" id="btnSettings">SETTINGS</button>
+          <button class="chip" id="btnScores">HIGH SCORES</button>
+        </div>
+        <div id="bestScore"></div>
+      </div>
+      <p id="fanNote"></p>
+    </section>
+
+    <!-- MULTIPLAYER LOBBY -->
+    <section id="screen-lobby" class="screen">
+      <div id="lobbyJoin" class="panel">
+        <h2>MULTIPLAYER</h2>
+        <label>Your nickname <input id="nick" maxlength="16" autocomplete="nickname" placeholder="Nickname"></label>
+        <button id="btnCreate" class="bigbtn small">CREATE A ROOM</button>
+        <div class="or">or join a friend's room</div>
+        <div class="row"><input id="joinCode" maxlength="4" placeholder="CODE" autocapitalize="characters" autocomplete="off"><button id="btnJoin" class="bigbtn small">JOIN</button></div>
+        <div id="lobbyMsg" class="msg"></div>
+        <button id="btnLobbyBack" class="chip">&larr; BACK</button>
+      </div>
+      <div id="lobbyRoom" class="panel" hidden>
+        <div id="roomHead"><span class="lbl">ROOM</span> <span id="roomCode">----</span>
+          <button id="btnCopy" class="chip">COPY LINK</button></div>
+        <div id="roomLink"></div>
+        <div id="roomCols">
+          <div id="playerBox"><div class="lbl">PLAYERS <span id="playerCount"></span></div><ol id="playerList"></ol></div>
+          <div id="chatBox"><div class="lbl">CHAT</div><div id="chatLog"></div>
+            <form id="chatForm" autocomplete="off"><input id="chatInput" maxlength="200" placeholder="Say something..."><button class="chip">SEND</button></form></div>
+        </div>
+        <div id="roomFoot"><button id="btnStart" class="bigbtn small">START GAME</button><span id="startHint"></span><button id="btnLeave" class="chip">LEAVE</button></div>
+      </div>
+    </section>
+
+    <!-- COUNTDOWN (original lobby backdrop) -->
+    <section id="screen-countdown" class="screen">
+      <div id="cdLabel">THE GAME STARTS IN</div><div id="cdMin">0</div><div id="cdSec">05</div>
+      <div id="cdTip">Four rounds. Beat the birds.<br>Faster answers earn bigger bonuses!</div>
+    </section>
+
+    <!-- ROUND INTRO -->
+    <section id="screen-intro" class="screen">
+      <div id="introImg" role="img" aria-label="Get ready for the round"></div>
+      <div id="introTitle"></div><div id="introCat"></div><div id="introInstr"></div>
+    </section>
+
+    <!-- PLAY -->
+    <section id="screen-play" class="screen">
+      <div id="wire"><span class="post l"></span><span class="post r"></span></div>
+      <div id="birdL" class="bird"><div class="bw"></div></div>
+      <div id="birdR" class="bird"><div class="bw"></div></div>
+      <div id="crashSprite"></div>
+      <div id="roundCircle"><span id="roundNum">1</span></div>
+      <div id="catBox"><span id="catText"></span></div>
+      <div id="clueLine"></div>
+      <div id="greenBox"><div id="greenClue"></div><div id="greenWord"></div><div id="story"></div></div>
+      <div id="orangeBoxes"><div class="obox" data-i="0"></div><div class="obox" data-i="1"></div><div class="obox" data-i="2"></div></div>
+      <div id="instr"></div>
+      <div id="typeBox"><div id="typeText"></div>
+        <input id="answer" type="text" inputmode="text" enterkeyhint="go" autocomplete="off" autocorrect="off" autocapitalize="characters"
+          spellcheck="false" aria-label="Type the first three letters"></div>
+      <div id="feedback"></div>
+      <div id="clockNum"></div>
+      <div id="progress"></div>
+      <div id="mpStrip"></div>
+      <div id="scoreBox"><div class="lbl">SCORE</div><div id="scoreNum">0</div></div>
+      <div id="standings" hidden><h3>STANDINGS</h3><ol id="standList"></ol></div>
+      <div id="pausedBanner" hidden>PAUSED<small>press Esc (or tap) to resume</small></div>
+    </section>
+
+    <!-- END -->
+    <section id="screen-end" class="screen">
+      <div id="endPanel">
+        <div id="endTitle">CONGRATULATIONS!</div>
+        <div id="dancers"></div>
+        <div id="endScore"></div><div id="endRank"></div><div id="endStats"></div><div id="endBest"></div>
+        <ol id="finalList"></ol>
+        <div id="endThanks">Thanks for playing!!!</div>
+      </div>
+      <button id="btnAgain" class="bigbtn small">PLAY AGAIN</button>
+      <button id="btnToLobby" class="bigbtn small">BACK TO LOBBY</button>
+      <button id="btnEndMenu" class="chip">MAIN MENU</button>
+    </section>
+
+    <button id="btnHelp" aria-label="How to play" title="How to play"></button>
+    <button id="btnMute" aria-label="Toggle sound" title="Sound on/off"></button>
+
+    <div id="helpModal" class="modal" hidden><div class="card">
+      <h2>HOW TO PLAY</h2>
+      <ul>
+        <li><b>4 rounds</b>, 3 puzzles each. Every puzzle has its own clock: two birds walk the tightrope toward each other.</li>
+        <li>Just start typing the <b>first three letters</b> of an answer. Right? The rest fills in. Wrong? Your turn is over.</li>
+        <li><b>Type ahead</b>: keep going while a word fills in. <b>YELBLU</b> solves YELLOW then BLUE.</li>
+        <li><b>Round 1:</b> a clue and one scrambled word. <b>Round 2:</b> three answers in orange boxes, any order.</li>
+        <li><b>Round 3:</b> a story with scrambled phrases. <b>Round 4:</b> a whole scrambled passage. Storybooks go word by word, in order.</li>
+        <li>If the birds meet, they crash and the answers are shown. Faster = more points. Esc pauses solo games.</li>
+        <li><b>Multiplayer:</b> 2-6 players get the same puzzles at the same time. The server keeps the clock and the score.</li>
+      </ul>
+      <button class="bigbtn small" data-close>GOT IT</button></div></div>
+
+    <div id="settingsModal" class="modal" hidden><div class="card">
+      <h2>SETTINGS</h2>
+      <label class="set"><input type="checkbox" id="setSound"> Sound effects</label>
+      <label class="set"><input type="checkbox" id="setTick"> Tick-tock clock</label>
+      <label class="set"><input type="checkbox" id="setMusic"> Theme music on the final screen</label>
+      <label class="set"><input type="checkbox" id="setMotion"> Bird rocking animation</label>
+      <label class="set">Auto-fill speed (solo)
+        <select id="setSpeed"><option value="190">Relaxed</option><option value="140">Normal</option><option value="90">Quick</option></select></label>
+      <label class="set">Nickname <input id="setNick" maxlength="16"></label>
+      <button class="bigbtn small" data-close>DONE</button></div></div>
+
+    <div id="scoresModal" class="modal" hidden><div class="card">
+      <h2>HIGH SCORES</h2><p class="sub">Solo games on this device</p>
+      <ol id="scoreTable"></ol>
+      <button class="chip" id="btnClearScores">CLEAR</button> <button class="bigbtn small" data-close>CLOSE</button></div></div>
+  </div>
+</div>
+<script src="js/puzzles-data.js"></script>
+<script src="js/engine.js"></script>
+<script src="js/art.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/net.js"></script>
+<script src="js/ui.js"></script>
+</body>
+</html>

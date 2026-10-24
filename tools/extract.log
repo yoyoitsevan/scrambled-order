@@ -1,0 +1,56 @@
+345ctsnd: wav 11590
+ans1: img (378, 54) frames=1
+answer: img (378, 54) frames=1
+back: img (640, 317) frames=1
+badclick: wav 7038
+birdcrsh: img (61, 34) frames=1
+category: img (415, 58) frames=1
+cltick: wav 1330
+comesoon: img (94, 80) frames=1
+corcmplt: wav 44218
+danceguy: img (80, 100) frames=51
+gamepal: GIF FAIL cannot identify image file <_io.BytesIO object at 0x7fd50e4eb6f0>
+getrd1: img (302, 249) frames=1
+getrd2: img (302, 249) frames=1
+getrd3: img (302, 249) frames=1
+getrd4: img (302, 249) frames=1
+helpdn: img (45, 45) frames=1
+helpup: img (45, 45) frames=1
+incorr: wav 26974
+lbird: img (42, 30) frames=3
+lefto: img (41, 55) frames=1
+lobback: img (640, 284) frames=1
+lobbydn: img (43, 46) frames=1
+lobbypal: GIF FAIL cannot identify image file <_io.BytesIO object at 0x7fd50e384b80>
+lobbyup: img (43, 46) frames=1
+logo: img (352, 314) frames=95
+logobord: img (400, 367) frames=1
+lsenddn: img (67, 21) frames=1
+lsendup: img (67, 21) frames=1
+onairbar: img (138, 24) frames=1
+oologpal: GIF FAIL cannot identify image file <_io.BytesIO object at 0x7fd50e384b80>
+ooocopy: img (583, 29) frames=1
+rank: img (15, 117) frames=1
+rbird: img (42, 30) frames=3
+rd1scram: img (502, 100) frames=1
+rd2scram: img (248, 63) frames=1
+rd3scram: img (502, 129) frames=1
+rd4scram: img (502, 129) frames=1
+righto: img (40, 56) frames=1
+rnd1in: img (415, 58) frames=1
+rnd1out: img (415, 58) frames=1
+rnd2in: img (415, 58) frames=1
+rnd2out: img (248, 63) frames=1
+rnd3in: img (378, 54) frames=1
+rnd3out: img (378, 54) frames=1
+rnd4in: img (502, 129) frames=1
+rnd4out: img (378, 54) frames=1
+senddn: img (67, 21) frames=1
+sendup: img (67, 21) frames=1
+soon: img (94, 80) frames=1
+sponsors: img (95, 28) frames=1
+theme: wav 130948
+timeout: wav 36126
+type: wav 3000
+updatsnd: wav 5558
+wrong: img (378, 54) frames=10

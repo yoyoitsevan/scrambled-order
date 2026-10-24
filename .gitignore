@@ -1,0 +1,6 @@
+node_modules/
+classic/
+*.zip
+__pycache__/
+dist/
+.env
