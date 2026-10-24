@@ -101,10 +101,12 @@
       if (self.session && self.session.token && self.wantRejoin) ws.send(JSON.stringify({ t: 'join', code: self.session.code, token: self.session.token, name: self.session.name }));
       var q = self.queue; self.queue = []; q.forEach(function (m) { ws.send(JSON.stringify(m)); });
       self.unconfirmed = key ? q : null;   // kept until the server answers, so a refused password doesn't drop them
+      self.opened = true; self.heard = false;
     };
     ws.onmessage = function (ev) {
       var m; try { m = JSON.parse(ev.data); } catch (e) { return; }
-      self.unconfirmed = null;
+      if (m.t === 'auth' && !m.ok) { self.denied = true; return; }   // the server refused the app password
+      self.unconfirmed = null; self.heard = true;
       if (m.serverNow) self.offset = self.offset * 0.7 + (m.serverNow - Date.now()) * 0.3;
       if (m.t === 'pong' && self._pingAt) { var rtt = Date.now() - self._pingAt; self.offset = m.serverNow + rtt / 2 - Date.now(); }
       if (m.t === 'joined') { self.session = { code: m.room.code, token: m.you.token, id: m.you.id, name: self.lastName };
@@ -114,7 +116,11 @@
       self._emit(m);
     };
     ws.onclose = function (ev) {
-      if (ev && ev.code === 4401) {   // wrong or changed password: ask again, no reconnect loop
+      // wrong or changed password: ask again, no reconnect loop. Proxies can drop the 4401 close frame, so an
+      // app-key socket that opened and closed without one server message (not even the pong) counts too.
+      var refused = (ev && ev.code === 4401) || self.denied || (key && self.opened && !self.heard && !self.closedByUser);
+      self.opened = false; self.denied = false;
+      if (refused) {
         self.queue = (self.unconfirmed || []).concat(self.queue); self.unconfirmed = null;
         Net.clearKey(); self.status = 'auth'; self._emit({ t: '_auth', reason: 'denied' }); return;
       }
