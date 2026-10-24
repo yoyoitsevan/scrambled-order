@@ -120,7 +120,7 @@
     } else segments = parseStory(item.story, rc.kind, rc.minLen || 4, rng, targets);
     return { round: rc.round, kind: rc.kind, category: category, clue: item.clue || '', story: item.story || null,
              segments: segments, targets: targets, missing: !!missing,
-             order: 'any',   // storybooks too: a correct word typed out of order must never end the turn
+             order: 'any',   // storybooks too: a correct word typed ahead of its turn must never end the turn
              seconds: item.seconds || (rc.seconds + rc.secondsPerWord * Math.max(0, targets.length - 1)), base: rc.base };
   }
 

@@ -92,9 +92,9 @@ test('storybook: fast typing through a whole passage', () => {
   const out = g.feed(ans.map(a => a.slice(0, 3)).join('').toLowerCase());
   assert.equal(out.length, 9); assert(out.every(o => o.state === 'solved'));
   assert.equal(g.lastResult.status, 'correct');
-  // out of order is fine; SNO matches SNOW (1st) and SNOWBALL (8th): the earliest unsolved word is solved
+  // any order is fine; SNO matches SNOW (1st) and SNOWBALL (8th): the earliest unsolved word is solved
   const g2 = mk({ story: 'Snow fell all weekend, so the whole street held a giant snowball battle.', kind: 'storyAll' });
-  assert.equal(g2.feed('FEL')[0].state, 'solved', 'out-of-order word is accepted in a storybook');
+  assert.equal(g2.feed('FEL')[0].state, 'solved', 'a later word typed first is accepted in a storybook');
   assert.equal(g2.currentPuzzle().targets[g2.feed('SNO')[0].target].answer, 'SNOW', 'duplicate key: earliest unsolved word first');
   assert.equal(g2.currentPuzzle().targets[g2.feed('SNO')[0].target].answer, 'SNOWBALL', 'then the next one with that key');
   assert.equal(g2.phase, 'playing'); assert.equal(g2.feed('QZX')[0].state, 'wrong', 'a key no word has is still wrong');
