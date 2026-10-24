@@ -7,7 +7,8 @@
  *  - Type the FIRST THREE LETTERS of a word; if right, the rest auto-fills; if wrong, the turn ends.
  *  - Type-ahead: letters are buffered and judged in order, three at a time, so "YELBLU" solves
  *    YELLOW then BLUE even while YELLOW is still auto-filling on screen.
- *  - Round 2's boxes can be solved in any order; storybook rounds (3, 4) go word by word in order.
+ *  - Every round accepts its unsolved words in any order (Round 2's boxes and the storybooks alike).
+ *    If two unsolved words share their first three letters, the earliest one is solved first.
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory();
@@ -24,9 +25,9 @@
     2: { kind: 'multi',    seconds: 12, secondsPerWord: 3, base: 70,  missingCount: 0, minLen: 4, title: 'Three of a Kind',
          instruction: 'THREE ANSWERS, ANY ORDER: FIRST THREE LETTERS OF EACH' },
     3: { kind: 'story',    seconds: 10, secondsPerWord: 3, base: 50,  missingCount: 0, minLen: 4, title: 'Storybook',
-         instruction: 'TYPE IN THE FIRST THREE LETTERS OF EACH WORD, IN ORDER' },
+         instruction: 'TYPE IN THE FIRST THREE LETTERS OF EACH WORD' },
     4: { kind: 'storyAll', seconds: 10, secondsPerWord: 3, base: 40,  missingCount: 0, minLen: 4, title: 'The Whole Story',
-         instruction: 'EVERY BIG WORD IS SCRAMBLED! SOLVE THEM ALL, IN ORDER' }
+         instruction: 'EVERY BIG WORD IS SCRAMBLED! SOLVE THEM ALL' }
   };
 
   var CONFIG = {
@@ -119,7 +120,7 @@
     } else segments = parseStory(item.story, rc.kind, rc.minLen || 4, rng, targets);
     return { round: rc.round, kind: rc.kind, category: category, clue: item.clue || '', story: item.story || null,
              segments: segments, targets: targets, missing: !!missing,
-             order: (rc.kind === 'story' || rc.kind === 'storyAll') ? 'sequence' : 'any',
+             order: 'any',   // storybooks too: a correct word typed out of order must never end the turn
              seconds: item.seconds || (rc.seconds + rc.secondsPerWord * Math.max(0, targets.length - 1)), base: rc.base };
   }
 
@@ -155,7 +156,8 @@
 
   // ---- one player's attempt at one puzzle (used by solo Game and by the server, per player) ----
   // Letters go in one at a time; every 3rd buffered letter is judged against the next unsolved
-  // word (order 'sequence') or any unsolved word (order 'any').
+  // word (order 'sequence', legacy) or any unsolved word (order 'any', what makePuzzle builds now);
+  // with duplicate keys the earliest unsolved word wins.
   function PuzzleState(puzzle) {
     this.puzzle = puzzle; this.solved = {}; this.buffer = ''; this.failed = false; this.letters = 0;
   }
@@ -314,5 +316,5 @@
 
   return { Game: Game, PuzzleState: PuzzleState, buildPuzzles: buildPuzzles, publicPuzzle: publicPuzzle, pointsFor: pointsFor,
            rankFor: rankFor, maxScoreOf: maxScoreOf, normalize: normalize, scrambleWord: scrambleWord, blankWord: blankWord,
-           parseStory: parseStory, CONFIG: CONFIG, ROUND_DEFAULTS: ROUND_DEFAULTS };
+           parseStory: parseStory, makePuzzle: makePuzzle, roundConfig: roundConfig, CONFIG: CONFIG, ROUND_DEFAULTS: ROUND_DEFAULTS };
 });

@@ -12,7 +12,7 @@ The title can be changed in `js/profile.js`, or with `GAME_TITLE="My Title" npm 
 * There are 4 rounds of 3 puzzles, and each puzzle has its own clock. Tuki the toucan and Flora the flamingo walk a tightrope toward each other, rocking on every beat.
 * Type the **first three letters** of an answer and the rest fills in. A wrong chunk ends your turn and the birds fall. If the birds meet, they crash, fall, and the answers are revealed.
 * **Type-ahead:** keep typing while a word fills in. `YELBLU` solves YELLOW, then BLUE.
-* **R1** is one clue and one word (some puzzles have missing letters instead of a scramble). **R2** is three answers in any order. **R3** is a story with scrambled phrases. **R4** is a 10–20 word passage with every 4+ letter word scrambled. Storybooks are solved in order.
+* **R1** is one clue and one word (some puzzles have missing letters instead of a scramble). **R2** is three answers in any order. **R3** is a story with scrambled phrases. **R4** is a 10–20 word passage with every 4+ letter word scrambled. Storybook words can be solved in any order (the earliest unsolved word is highlighted as a hint).
 * Faster answers score more.
 
 ## Multiplayer (2–6 players)

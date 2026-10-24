@@ -240,9 +240,9 @@
     var p = game.currentPuzzle(), t = p && p.targets[id]; if (!t || !t.answer) return;
     document.querySelectorAll('.scr[data-t="' + id + '"]').forEach(function (el) { el.textContent = t.answer; el.className = 'scr ' + cls; });
   }
-  function markNext() {                       // storybooks are solved in order: underline the next word
+  function markNext() {                       // storybooks: highlight the earliest unsolved word as a hint (any order is accepted)
     document.querySelectorAll('.scr.next').forEach(function (el) { el.classList.remove('next'); });
-    var p = game && game.currentPuzzle(); if (!p || p.order !== 'sequence' || !canType()) return;
+    var p = game && game.currentPuzzle(); if (!p || !p.segments || !canType()) return;
     var n = game.unsolved()[0]; if (n) { var el = document.querySelector('.scr[data-t="' + n.id + '"]'); if (el) el.classList.add('next'); }
   }
 

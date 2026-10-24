@@ -33,8 +33,8 @@ test('built puzzles: big words, stable anagram scrambles, sensible clocks', () =
              if (t.answer.length >= 5) assert.notEqual(t.clue.toUpperCase().slice(0, 3), t.key, 'scramble must not start with the answer'); }
     });
     if (p.kind === 'story') assert(p.targets.length >= 2 && p.targets.length <= 6, p.story);
-    if (p.kind === 'storyAll') { assert(p.targets.length >= 7, 'R4 should be a long passage: ' + p.story); assert.equal(p.order, 'sequence'); }
-    if (p.kind === 'multi') assert.equal(p.order, 'any');
+    if (p.kind === 'storyAll') { assert(p.targets.length >= 7, 'R4 should be a long passage: ' + p.story); assert.equal(p.order, 'any'); }
+    assert.equal(p.order, 'any', 'every round accepts words in any order');
     assert(p.seconds >= 12 && p.seconds <= 50, 'clock ' + p.seconds);
     const pub = E.publicPuzzle(p); assert(!JSON.stringify(pub).includes('"answer"'), 'public puzzle leaks answers');
   }));
@@ -52,7 +52,7 @@ test('story parsing: short words plain, punctuation kept', () => {
 function mk(puzzleSpec, cfg) {
   const t = []; let p;
   if (puzzleSpec.story) { const segs = E.parseStory(puzzleSpec.story, puzzleSpec.kind, 4, rng, t);
-    p = { round: 3, kind: puzzleSpec.kind, segments: segs, targets: t, order: 'sequence', seconds: 30, base: 50 }; }
+    p = { round: 3, kind: puzzleSpec.kind, segments: segs, targets: t, order: 'any', seconds: 30, base: 50 }; }
   else p = { round: 2, kind: 'multi', targets: puzzleSpec.answers.map((a, i) => ({ id: i, answer: a, key: a.slice(0, 3), clue: a, style: 'scramble' })), order: 'any', seconds: 30, base: 70 };
   const g = new E.Game(data, { rng, config: cfg, rounds: [{ round: p.round, title: 't', instruction: 'i', kind: p.kind, category: 'c', base: p.base, puzzles: [p] }] });
   g.start(); g.tick(C.countdownMs + 1); g.tick(C.roundIntroMs + 1); assert.equal(g.phase, 'playing');
@@ -85,16 +85,45 @@ test('any-order boxes; wrong chunk ends the turn and drops the rest', () => {
   assert.equal(g.feed('YEL').length, 0, 'nothing accepted after the turn ends');
 });
 
-test('storybook: sequential order, fast typing through a whole passage', () => {
+test('storybook: fast typing through a whole passage', () => {
   const g = mk({ story: 'Snow fell all weekend, so the whole street held a giant snowball battle.', kind: 'storyAll' });
   const ans = g.unsolved().map(t => t.answer);
   assert.deepEqual(ans, ['SNOW', 'FELL', 'WEEKEND', 'WHOLE', 'STREET', 'HELD', 'GIANT', 'SNOWBALL', 'BATTLE']);
   const out = g.feed(ans.map(a => a.slice(0, 3)).join('').toLowerCase());
   assert.equal(out.length, 9); assert(out.every(o => o.state === 'solved'));
   assert.equal(g.lastResult.status, 'correct');
-  // SNO matches SNOW (1st) and SNOWBALL (8th): sequence order decides
+  // out of order is fine; SNO matches SNOW (1st) and SNOWBALL (8th): the earliest unsolved word is solved
   const g2 = mk({ story: 'Snow fell all weekend, so the whole street held a giant snowball battle.', kind: 'storyAll' });
-  assert.equal(g2.feed('FEL')[0].state, 'wrong', 'out-of-order word is wrong in a storybook');
+  assert.equal(g2.feed('FEL')[0].state, 'solved', 'out-of-order word is accepted in a storybook');
+  assert.equal(g2.currentPuzzle().targets[g2.feed('SNO')[0].target].answer, 'SNOW', 'duplicate key: earliest unsolved word first');
+  assert.equal(g2.currentPuzzle().targets[g2.feed('SNO')[0].target].answer, 'SNOWBALL', 'then the next one with that key');
+  assert.equal(g2.phase, 'playing'); assert.equal(g2.feed('QZX')[0].state, 'wrong', 'a key no word has is still wrong');
+});
+
+test('regression: WAT solves WATER first in "A [rainbow] appears when [sunlight] shines through tiny [water droplets]."', () => {
+  const story = 'A [rainbow] appears when [sunlight] shines through tiny [water droplets].';
+  const rc = Object.assign(E.roundConfig(data, 2), { kind: 'story' });
+  const pz = E.makePuzzle({ story }, rc, 'Science', rng, false);
+  assert.equal(pz.order, 'any');
+  assert.deepEqual(pz.targets.map(t => t.answer), ['RAINBOW', 'SUNLIGHT', 'WATER', 'DROPLETS']);
+  // the exact path the multiplayer server uses (server/room.js feeds PuzzleState letter by letter)
+  const ps = new E.PuzzleState(pz);
+  assert.equal(ps.feedLetter('w'), null); assert.equal(ps.feedLetter('a'), null);
+  const r = ps.feedLetter('t'); assert(r.ok, 'WAT must not end the turn'); assert.equal(r.target.answer, 'WATER');
+  ['dro', 'sun', 'rai'].join('').split('').forEach(c => ps.feedLetter(c));
+  assert(ps.done() && !ps.failed, 'all four solved in a different order');
+  // solo game with type-ahead in reverse order
+  const g = mk({ story, kind: 'story' }); const out = g.feed('watdrosunrai');
+  assert.deepEqual(out.map(o => o.state), ['solved', 'solved', 'solved', 'solved']); assert.equal(g.lastResult.status, 'correct');
+});
+
+test('puzzle data: no correct three-letter prefix can be rejected', () => {
+  for (let k = 0; k < 40; k++) E.buildPuzzles(data, rng).forEach(r => r.puzzles.forEach(p => {
+    // every target's own key, typed first, must be accepted (any order), for every target
+    p.targets.forEach(t => { const ps = new E.PuzzleState(p);
+      const out = t.key.split('').map(c => ps.feedLetter(c)).pop(); assert(out && out.ok, p.story || p.clue); });
+    p.targets.forEach(t => assert(/^[A-Z]{4,}$/.test(t.answer) && t.key === t.answer.slice(0, 3), 'clean answer ' + t.answer));
+  }));
 });
 
 test('clock pauses while fills are queued (solo) but not when pauseDuringFill=false', () => {
@@ -132,7 +161,7 @@ test('full playthroughs (mixed outcomes, burst typing)', () => {
       if (roll < 0.06) { g.tick(g.timeLeft + g.holdLeft + 1); continue; }
       if (roll < 0.1) { g.feed('QQQ'); continue; }
       const open = g.unsolved();
-      const burst = (g.currentPuzzle().order === 'sequence' ? open : E.Game.prototype && open.slice().reverse()).slice(0, 1 + Math.floor(rng() * 3));
+      const burst = (rng() < 0.5 ? open : open.slice().reverse()).slice(0, 1 + Math.floor(rng() * 3));
       g.feed(burst.map(t => t.key).join('')); g.tick(200);
     }
     const s = g.summary(); assert.equal(g.phase, 'finished'); assert.equal(s.played, 12);
