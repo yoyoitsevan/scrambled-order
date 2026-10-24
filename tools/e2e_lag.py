@@ -8,7 +8,8 @@ import sys, os, re, json, time, subprocess, hmac, hashlib, statistics
 from playwright.sync_api import sync_playwright
 BASE = (sys.argv[1] if len(sys.argv) > 1 else 'http://localhost:8780').rstrip('/')
 ONE_WAY = int(sys.argv[2]) if len(sys.argv) > 2 else 400
-PORT = int(re.search(r':(\d+)$', BASE).group(1)); PROXY = PORT + 6
+LIVE = not re.search(r'://(localhost|127\.0\.0\.1):\d+$', BASE)   # a deployed site: no proxy, both connect directly
+PORT = 0 if LIVE else int(re.search(r':(\d+)$', BASE).group(1)); PROXY = PORT + 6
 PW = os.environ.get('CLASSIC_PW'); G = 'window.OOO.game'; REACT = 1500; PUZZLES = int(os.environ.get('PUZZLES', '6'))
 data = json.load(open(os.path.join(os.path.dirname(__file__), '..', 'data', 'puzzles.json')))
 words = set()
@@ -34,8 +35,8 @@ AGENT = """(() => { const WORDS = %s, REACT = %d;
     if (last && g && g.phase === 'playing') R.fr.push(t - last); last = t; requestAnimationFrame(f); })(0);
 })();""" % (json.dumps(sorted(words)), REACT)
 JITTER = int(os.environ.get('JITTER', '0')); Q = '/?fast=1' if os.environ.get('FAST', '1') == '1' else '/'
-proxy = subprocess.Popen(['node', os.path.join(os.path.dirname(__file__), 'lagproxy.js'), str(PROXY), str(PORT), str(ONE_WAY), str(JITTER)], stdout=subprocess.PIPE)
-time.sleep(0.6)
+proxy = None if LIVE else subprocess.Popen(['node', os.path.join(os.path.dirname(__file__), 'lagproxy.js'), str(PROXY), str(PORT), str(ONE_WAY), str(JITTER)], stdout=subprocess.PIPE)
+time.sleep(0 if LIVE else 0.6)
 try:
     with sync_playwright() as p:
         b = p.chromium.launch(executable_path='/usr/bin/google-chrome', args=['--no-sandbox', '--autoplay-policy=no-user-gesture-required'])
@@ -44,7 +45,7 @@ try:
             if PW: kw['http_credentials'] = {'username': 'friends', 'password': PW}
             if lagged: kw.update(is_mobile=True, has_touch=True)
             ctx = b.new_context(**kw); errs = []
-            if lagged:
+            if lagged and not LIVE:
                 init = "window.OOO_SERVER = 'ws://127.0.0.1:%d/ws';" % PROXY
                 if PW:
                     label = 'scrambled-order-classic-app-v1'
@@ -54,7 +55,7 @@ try:
             pg.goto(BASE + Q); pg.wait_for_function('window.OOO && window.OOO.ready'); pg.evaluate(AGENT); return pg
         A = page(False, 800, 600); B = page(True, 390, 844)
         A.click('#btnMulti', force=True); A.fill('#nick', 'Near'); A.click('#btnCreate', force=True)
-        A.wait_for_function("/^[A-Z]{4}$/.test(document.getElementById('roomCode').textContent)", timeout=30000); code = A.text_content('#roomCode')
+        A.wait_for_function("/^[A-Z]{4}$/.test(document.getElementById('roomCode').textContent)", timeout=90000); code = A.text_content('#roomCode')
         B.wait_for_timeout(300)
         if B.is_visible('#btnMulti'): B.click('#btnMulti', force=True)
         B.fill('#nick', 'Far'); B.fill('#joinCode', code); B.click('#btnJoin', force=True)
@@ -69,7 +70,7 @@ try:
         show = [rb['shown'][i] - ra['shown'][i] for i in range(n)]
         dead = [rb['deadline'][i] - ra['deadline'][i] for i in range(n)]
         fr = rb['fr'][10:]
-        out = {'one_way_ms': ONE_WAY, 'jitter_ms': JITTER, 'rtt_ms_seen_by_far_client': B.evaluate("window.OOO.net.rtt || null"),
+        out = {'live': LIVE, 'one_way_ms': 0 if LIVE else ONE_WAY, 'jitter_ms': JITTER, 'rtt_ms_seen_by_far_client': B.evaluate("window.OOO.net.rtt || null"),
                'puzzle_shown_skew_ms(far-near)': show, 'clock_deadline_skew_ms(far-near)': [round(x) for x in dead],
                'points_near': ra['pts'][:n], 'points_far': rb['pts'][:n],
                'far_frame_ms_median': round(statistics.median(fr), 1) if fr else None, 'far_long_frames_over_50ms': sum(1 for x in fr if x > 50)}
@@ -82,4 +83,4 @@ try:
             print('lag fairness ok')
         b.close()
 finally:
-    proxy.kill()
+    if proxy: proxy.kill()
