@@ -22,8 +22,8 @@ const crypto = require('crypto');
 const E = require('../js/engine.js');
 
 const MAX_PLAYERS = 6, MIN_PLAYERS = 2;
-const TIMING = { countdownMs: 5000, roundIntroMs: 2800, revealMs: 4500, lobbyGraceMs: 30000 };
-const FAST = { countdownMs: 1200, roundIntroMs: 600, revealMs: 1200, lobbyGraceMs: 30000 };
+const TIMING = { countdownMs: 5000, roundIntroMs: 7400, roundIntroNextMs: 12400, revealMs: 4500, lobbyGraceMs: 30000 };
+const FAST = { countdownMs: 1200, roundIntroMs: 600, roundIntroNextMs: 600, revealMs: 1200, lobbyGraceMs: 30000 };
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
 // capMs: most a player can be credited for latency; jitterMs: extra allowance over the median one-way
 // latency; lead*: how far ahead of time a puzzle is sent (covers the slowest player's one-way latency)
@@ -166,8 +166,9 @@ class Room {
     const r = this.rounds[this.roundIdx];
     this.state = 'intro';
     this.broadcast({ t: 'roundIntro', round: r.round, title: r.title, category: r.category, instruction: r.instruction });
-    const lead = this.leadMs(this.t.roundIntroMs);
-    this.later(() => this.beginPuzzle(lead), this.t.roundIntroMs - lead);
+    const introMs = this.roundIdx > 0 ? this.t.roundIntroNextMs : this.t.roundIntroMs;   // long enough for the get-ready theme to finish
+    const lead = this.leadMs(introMs);
+    this.later(() => this.beginPuzzle(lead), introMs - lead);
   }
   // The puzzle goes out `lead` ms early with its start/end times: every client reveals it at startsAt.
   beginPuzzle(lead) {

@@ -60,6 +60,7 @@ function mk(puzzleSpec, cfg) {
   else p = { round: 2, kind: 'multi', targets: puzzleSpec.answers.map((a, i) => ({ id: i, answer: a, key: a.slice(0, 3), clue: a, style: 'scramble' })), order: 'any', seconds: 30, base: 70 };
   const g = new E.Game(data, { rng, config: cfg, rounds: [{ round: p.round, title: 't', instruction: 'i', kind: p.kind, category: 'c', base: p.base, puzzles: [p] }] });
   g.start(); g.tick(C.countdownMs + 1); g.tick(C.roundIntroMs + 1); assert.equal(g.phase, 'playing');
+  assert(C.countdownMs + C.roundIntroMs >= 12300 && C.roundIntroNextMs >= 12300, 'get-ready gaps let the 11.9 s theme finish');
   return g;
 }
 

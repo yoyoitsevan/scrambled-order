@@ -370,7 +370,7 @@
         else A.play('update');
         break;
       case 'puzzle':
-        clearAnim(); $('standings').hidden = true; A.themeFade(); renderPuzzle(ev.puzzle, g.currentRound());
+        clearAnim(); $('standings').hidden = true; A.themeFade(); /* no-op once the theme has ended; only trims it if a puzzle would overlap */ renderPuzzle(ev.puzzle, g.currentRound());
         $('progress').textContent = 'Round ' + g.currentRound().round + ' \u00b7 puzzle ' + (ev.index + 1) + ' of ' + ev.count;
         setFeedback(''); setScore(g.score); boxFlash(null); resetBirds(); renderStrip(g.players);
         $('clockNum').className = ''; focusInput(); later(focusInput, 60); break;
@@ -466,7 +466,7 @@
   function startSolo() {
     A.unlock(); A.themeStop(); leaveRoom(true); mode = 'solo';
     var cfg = { letterMs: +S.speed || 140 };
-    if (params.get('fast')) Object.assign(cfg, { countdownMs: 1200, roundIntroMs: 600, correctPauseMs: 600, failLeadMs: 500, revealTailMs: 300, failShowMs: 900, letterMs: 45, wordHoldMs: 120, revealGapMs: 150 });
+    if (params.get('fast')) Object.assign(cfg, { countdownMs: 1200, roundIntroMs: 600, roundIntroNextMs: 600, correctPauseMs: 600, failLeadMs: 500, revealTailMs: 300, failShowMs: 900, letterMs: 45, wordHoldMs: 120, revealGapMs: 150 });
     var seed = params.get('seed'), rng = Math.random;
     if (seed) { var x = +seed || 1; rng = function () { x = (x * 1664525 + 1013904223) % 4294967296; return x / 4294967296; }; }
     game = new E.Game(data, { config: cfg, rng: rng }); game.on(onEvent);

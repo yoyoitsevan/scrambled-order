@@ -35,7 +35,8 @@
   var CONFIG = {
     puzzlesPerRound: 3,
     countdownMs: 5000,
-    roundIntroMs: 2800,
+    roundIntroMs: 7400,       // round 1 get-ready: countdown (5 s) + this = 12.4 s, so the 11.9 s theme plays out
+    roundIntroNextMs: 12400,  // rounds 2-4: the theme restarts on the get-ready card and finishes before the puzzle
     letterMs: 140,         // auto-fill speed, one letter at a time
     wordHoldMs: 300,       // a finished word lingers in the typebox before the next fill starts
     pauseDuringFill: true, // solo: the clock waits while words auto-fill (multiplayer: false)
@@ -329,7 +330,7 @@
     var self = this; return targets.reduce(function (a, t) { return a + self.fillMs(t.answer.length) + self.cfg.revealGapMs; }, 0);
   };
   Game.prototype._beginRoundIntro = function () {
-    this.phase = 'roundIntro'; this.phaseLeft = this.cfg.roundIntroMs;
+    this.phase = 'roundIntro'; this.phaseLeft = this.roundIdx > 0 && this.cfg.roundIntroNextMs != null ? this.cfg.roundIntroNextMs : this.cfg.roundIntroMs;
     var r = this.currentRound();
     this._emit('roundIntro', { round: r.round, title: r.title, category: r.category, instruction: r.instruction });
   };
