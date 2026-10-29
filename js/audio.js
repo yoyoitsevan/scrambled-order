@@ -8,7 +8,7 @@
   // Measured by tools/measure_audio.py (each voice -> about -20 dBFS RMS, peaks <= 0.9); the
   // rapid-fire ones (typing, clock) then sit 4 dB lower so they never tire the ear.
   var LEVEL = { type: 0.85, tick: 0.52, tock: 0.5, tick3: 0.37, correct: 0.48, wrong: 0.4, bad: 0.84, update: 0.41,
-                whistle: 0.16, crash: 0.63, tally: 0.93, join: 0.77, theme: 0.56 };
+                whistle: 0.16, crash: 0.63, tally: 0.93, join: 0.77, theme: 0.56, word: 0.48, hint: 0.41, final: 0.93 };
   var muted = false, counts = {}, ctx = null, master = null, themeBus = null;
   try { muted = localStorage.getItem('ooo.mute') === '1'; } catch (e) {}
 
@@ -83,6 +83,9 @@
       tone(c, o, t, 150, 0.3, 'sine', 1, { to: 45 });
       [0.06, 0.16, 0.27].forEach(function (d, i) { tone(c, o, t + d, 620 - i * 120, 0.09, 'triangle', 0.4, { to: 300 - i * 50 }); });
       return 0.55; },
+    word: function (c, o, t) { return V.correct(c, o, t); },     // one word of a longer answer
+    hint: function (c, o, t) { return V.update(c, o, t); },      // a storybook word auto-unscrambles
+    final: function (c, o, t) { return V.tally(c, o, t); },      // the end-of-game screen
     tally: function (c, o, t) { for (var i = 0; i < 10; i++) tone(c, o, t + i * 0.035, NOTE(72 + i * 2), 0.04, 'square', 0.5, { lp: 3000 }); return 0.4; },
     join: function (c, o, t) { tone(c, o, t, 660, 0.07, 'sine', 0.9); tone(c, o, t + 0.08, 990, 0.12, 'sine', 0.9); return 0.24; },
     theme: function (c, o, t) {            // original jingle, about 7 s
@@ -136,7 +139,7 @@
     if (c && b) {
       if (c.state === 'suspended') c.resume();
       try { var src = c.createBufferSource(), g = c.createGain(); src.buffer = b; if (rate) src.playbackRate.value = rate;
-            g.gain.value = vol(name); src.connect(g); g.connect(c.destination); src.start(); return src; } catch (e) { return true; }
+            g.gain.value = vol(name); src.connect(g); g.connect(c.destination); src.start(); src._gain = g; return src; } catch (e) { return true; }
     }
     if (loading[name] && loading[name] !== 'failed' && c) return true;   // still downloading: skip rather than download twice
     try { var a = element(name); a.volume = vol(name); a.currentTime = 0;
@@ -162,36 +165,41 @@
   function tickTock() {
     if (muted) return;
     var odd = tickN++ % 2;
-    if (playSample('clock', odd ? 0.72 : 1.0)) return;
+    // classic: the original clock tick, the same every second (no pitched-down "tock" in between)
+    if (playSample('clock', SAMPLES && SAMPLES.only ? 1.0 : (odd ? 0.72 : 1.0))) return;
     synth(odd ? 'tock' : 'tick');
   }
   function whistle() {
     window.OOOAudio.whistles = (window.OOOAudio.whistles || 0) + 1; if (muted) return;
-    if (SAMPLES && SAMPLES.only) { classicWhistle(); return; }
+    if (playSample('timeout')) return;      // classic: the original time-out whistle as the birds crash
+    if (SAMPLES && SAMPLES.only) return;
     synth('whistle');
-  }
-  // classic: the original-build slide whistle exactly as it was (pure wobbling sine, no breath noise)
-  function classicWhistle() {
-    var c = actx(); if (!c) return;
-    var t = c.currentTime, dur = 1.15, osc = c.createOscillator(), g = c.createGain(), lfo = c.createOscillator(), lg = c.createGain();
-    osc.type = 'sine'; osc.frequency.setValueAtTime(2300, t);
-    osc.frequency.exponentialRampToValueAtTime(1500, t + 0.18); osc.frequency.exponentialRampToValueAtTime(220, t + dur);
-    lfo.frequency.value = 9; lg.gain.value = 40; lfo.connect(lg); lg.connect(osc.frequency);
-    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.32, t + 0.04);
-    g.gain.setValueAtTime(0.32, t + dur - 0.2); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    osc.connect(g); g.connect(c.destination);
-    osc.start(t); lfo.start(t); osc.stop(t + dur + 0.05); lfo.stop(t + dur + 0.05);
   }
   function themeStart() {
     if (muted) return;
     if (hasSample('theme')) {
       themeStop(); var v = (SAMPLES.volume || {}).theme || 0.55;
-      if (ctx && bufs.theme) { var s = playSample('theme'); if (s && s.connect) themeSrc = s; return; }
+      if (ctx && bufs.theme) { var s = playSample('theme'); if (s && s.connect) { themeSrc = s; s._t0 = ctx.currentTime; } return; }
       if (loading.theme && loading.theme !== 'failed' && ctx) return;   // not downloaded yet: no theme this time
       try { themeEl = themeEl || new Audio(SAMPLES.base + SAMPLES.files.theme); themeEl.volume = v; themeEl.currentTime = 0; var p = themeEl.play(); if (p && p.catch) p.catch(function () {}); } catch (e) {}
       return;
     }
     themeStop(); themeBus = synth('theme');
+  }
+  function themePlaying() {
+    if (themeSrc && ctx && themeSrc.buffer) return ctx.currentTime < themeSrc._t0 + themeSrc.buffer.duration;
+    if (themeEl) return !themeEl.paused && !themeEl.ended;
+    return !!themeBus;
+  }
+  // fade the theme out over ~0.4 s (the round's first puzzle appears)
+  function themeFade() {
+    if (themeSrc && themeSrc._gain && ctx) {
+      var s = themeSrc, g = s._gain; themeSrc = null;
+      try { g.gain.setTargetAtTime(0, ctx.currentTime, 0.12); setTimeout(function () { try { s.stop(); } catch (e) {} }, 600); } catch (e) {}
+      return;
+    }
+    if (themeEl && !themeEl.paused) { var el = themeEl, v = el.volume, k = 0, iv = setInterval(function () { k++; el.volume = Math.max(0, v * (1 - k / 6)); if (k >= 6) { clearInterval(iv); el.pause(); el.volume = v; } }, 70); return; }
+    themeStop();
   }
   function themeStop() {
     try { if (themeEl) themeEl.pause(); } catch (e) {}
@@ -211,6 +219,6 @@
       return { name: name, dur: dur, peak: pk, rms: Math.sqrt(ss / n) };
     });
   }
-  window.OOOAudio = { counts: counts, loaded: function () { return Object.keys(bufs); }, whistle: whistle, tickTock: tickTock, play: play, themeStart: themeStart, themeStop: themeStop, unlock: unlock,
+  window.OOOAudio = { counts: counts, loaded: function () { return Object.keys(bufs); }, whistle: whistle, tickTock: tickTock, play: play, themeStart: themeStart, themeStop: themeStop, themeFade: themeFade, themePlaying: themePlaying, unlock: unlock,
                       setMuted: setMuted, isMuted: function () { return muted; }, voices: Object.keys(V), measure: measure, LEVEL: LEVEL };
 })();

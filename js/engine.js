@@ -27,7 +27,9 @@
     3: { kind: 'story',    seconds: 10, secondsPerWord: 3, base: 50,  missingCount: 0, minLen: 4, title: 'Storybook',
          instruction: 'TYPE IN THE FIRST THREE LETTERS OF EACH WORD' },
     4: { kind: 'storyAll', seconds: 10, secondsPerWord: 3, base: 40,  missingCount: 0, minLen: 4, title: 'The Whole Story',
-         instruction: 'EVERY BIG WORD IS SCRAMBLED! SOLVE THEM ALL' }
+         instruction: 'EVERY BIG WORD IS SCRAMBLED! SOLVE THEM ALL',
+         // a quote ({story, author, choices:[2 decoys]}) is followed by a "who said it?" pick
+         choiceSeconds: 12, choiceBase: 50, choiceInstruction: 'WHO SAID IT? TYPE 1, 2 OR 3' }
   };
 
   var CONFIG = {
@@ -41,6 +43,7 @@
     failLeadMs: 1300,
     revealGapMs: 450,
     revealTailMs: 1500,
+    failShowMs: 2500,      // a failed puzzle shows its unscrambled words this long (no typing), then moves on
     speedBonusMax: 0.5,
     // A word is worth base * (1 + speedBonusMax) while at least decayStart of the clock is left, then
     // slides steadily down to decayFloor of that at the buzzer. Typing the first letter of an answer
@@ -199,10 +202,22 @@
              seconds: item.seconds || (rc.seconds + rc.secondsPerWord * Math.max(0, targets.length - 1)), base: rc.base };
   }
 
+  // Round 4 quotes: after unscrambling it, pick who said it from three names (type 1, 2 or 3, which the
+  // client turns into that name's first three letters, so judging and scoring are the usual ones).
+  function makeChoicePuzzle(item, rc, rng) {
+    var ans = normalize(item.author);
+    var names = [item.author].concat(item.choices.filter(function (c) { return normalize(c) !== ans; })).slice(0, 3);
+    return { round: rc.round, kind: 'choice', category: 'Who Said It?', clue: '', story: null, segments: null, missing: false,
+             quote: String(item.story).replace(/[\[\]]/g, ''), choices: shuffled(names, rng), revealOrder: null,
+             instruction: rc.choiceInstruction || ROUND_DEFAULTS[4].choiceInstruction,
+             targets: [{ id: 0, answer: ans, key: keyOf(ans), clue: '', group: 0, style: 'choice' }],
+             order: 'any', seconds: rc.choiceSeconds || 12, base: rc.choiceBase || 50 };
+  }
+
   // What a client may see before solving: no answers.
   function publicPuzzle(p) {
     return { round: p.round, kind: p.kind, category: p.category, clue: p.clue, segments: p.segments, missing: p.missing,
-             order: p.order, seconds: p.seconds, base: p.base,
+             order: p.order, seconds: p.seconds, base: p.base, choices: p.choices || null, quote: p.quote || null, instruction: p.instruction || null,
              targets: p.targets.map(function (t) { return { id: t.id, clue: t.clue, style: t.style, group: t.group, len: t.answer.length }; }) };
   }
 
@@ -224,7 +239,10 @@
       var items = shuffled(set.items, rng).slice(0, cfg.puzzlesPerRound);
       var miss = {}; shuffled(items.map(function (_, k) { return k; }), rng).slice(0, rc.missingCount).forEach(function (k) { miss[k] = true; });
       rounds.push({ round: rc.round, title: rc.title, instruction: rc.instruction, kind: rc.kind, category: set.category, base: rc.base,
-        puzzles: items.map(function (it, k) { return makePuzzle(it, rc, set.category, rng, miss[k] || it.clueStyle === 'missing'); }) });
+        puzzles: items.reduce(function (out, it, k) {
+          out.push(makePuzzle(it, rc, set.category, rng, miss[k] || it.clueStyle === 'missing'));
+          if (it.story && it.author && it.choices) out.push(makeChoicePuzzle(it, rc, rng));
+          return out; }, []) });
     }
     return rounds;
   }
@@ -332,7 +350,7 @@
     this.results.push(res); this.lastResult = res; this.phase = 'feedback';
     var queued = this.holdLeft; this.holdLeft = 0;      // fills already queued on screen still play out
     this.phaseLeft = queued + (status === 'correct' ? this.cfg.correctPauseMs
-      : this.cfg.failLeadMs + this.revealMs(unsolved) + this.cfg.revealTailMs);
+      : this.cfg.failLeadMs + this.cfg.failShowMs);
     return { reveal: unsolved.map(function (t) { return t.id; }), queuedMs: queued };
   };
   Game.prototype._advance = function () {
@@ -427,5 +445,5 @@
   return { Game: Game, PuzzleState: PuzzleState, buildPuzzles: buildPuzzles, publicPuzzle: publicPuzzle, pointsFor: pointsFor,
            valueTime: valueTime, revealTimes: revealTimes, pickReveal: pickReveal, pickGiven: pickGiven,
            rankFor: rankFor, maxScoreOf: maxScoreOf, normalize: normalize, scrambleWord: scrambleWord, blankWord: blankWord,
-           parseStory: parseStory, makePuzzle: makePuzzle, roundConfig: roundConfig, CONFIG: CONFIG, ROUND_DEFAULTS: ROUND_DEFAULTS };
+           parseStory: parseStory, makePuzzle: makePuzzle, makeChoicePuzzle: makeChoicePuzzle, roundConfig: roundConfig, CONFIG: CONFIG, ROUND_DEFAULTS: ROUND_DEFAULTS };
 });

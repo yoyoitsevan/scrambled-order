@@ -122,9 +122,19 @@
     if (input.value !== SENT) input.value = SENT;
     try { input.setSelectionRange(1, 1); } catch (e) {}
   }
+  // "Who said it?": typing 1, 2 or 3 enters the first three letters of that name
+  function choiceKeys(v) {
+    var p = game && game.currentPuzzle && game.currentPuzzle();
+    if (!p || p.kind !== 'choice' || !p.choices) return v;
+    return v.replace(/[1-3]/g, function (d) { return E.normalize(p.choices[+d - 1] || '').slice(0, 3); });
+  }
+  var lastBad = 0;
   function canType() { return game && game.phase === 'playing' && !game.paused && (mode === 'solo' || game.myStatus === 'playing'); }
   function onLetters(letters) {
-    if (!canType()) return;
+    if (!canType()) {                         // typing while locked out (turn over / waiting): the "bad click"
+      if (game && stage.dataset.screen === 'play' && Date.now() - lastBad > 600) { lastBad = Date.now(); A.play('bad'); }
+      return;
+    }
     for (var i = 0; i < letters.length; i++) { pending += letters[i]; A.play('type'); }   // one click per typed letter
     renderBox();
     game.feed(letters);
@@ -137,7 +147,7 @@
   input.addEventListener('input', function () {
     var v = input.value;
     if (!v.length) onBackspace();
-    else { var l = v.replace(/^ /, '').toUpperCase().replace(/[^A-Z]/g, ''); if (l) onLetters(l); }
+    else { var l = choiceKeys(v.replace(/^ /, '').toUpperCase()).replace(/[^A-Z]/g, ''); if (l) onLetters(l); }
     input.value = SENT; try { input.setSelectionRange(1, 1); } catch (e) {}
   });
   input.addEventListener('keydown', function (e) { if (e.key === 'Enter') e.preventDefault(); });
@@ -159,8 +169,8 @@
     (function step() {
       if (i >= word.length) {
         if (it.kind === 'fill') {
-          curFill = null; markWord(it.id, 'solved'); boxFlash('good'); A.play('correct');
-          setFeedback('+' + it.points + (it.last ? '  SOLVED!' + (mode === 'multi' ? ' WAITING FOR THE OTHERS...' : '') : '  NICE!'), 'good');
+          curFill = null; markWord(it.id, 'solved'); boxFlash('good'); A.play(it.last ? 'correct' : 'word');
+          setFeedback('+' + it.points + (it.last ? '  SOLVED!' + (mode === 'multi' ? ' STAY TUNED...' : '') : '  NICE!'), 'good');
           if (it.last) { keepFill = true; qBusy = false; return; }
           later(function () { fillText = ''; renderBox(); runQ(); }, game.cfg.wordHoldMs);
         } else { markWord(it.id, 'revealed'); later(runQ, game.cfg.revealGapMs); }   // reveal
@@ -178,19 +188,24 @@
   }
   function fitText(el, size, max) { el.style.fontSize = size + 'px'; while (size > 14 && el.scrollWidth > max) { size--; el.style.fontSize = size + 'px'; } }
   function renderPuzzle(p, r) {
-    kind = p.kind; setScreen('play', 'play');
-    $('roundNum').textContent = r.round; $('catText').textContent = r.category;
+    kind = p.kind === 'choice' ? 'multi k-choice' : p.kind; setScreen('play', 'play');
+    $('roundNum').textContent = r.round; $('catText').textContent = p.kind === 'choice' ? p.category : r.category;
     $('greenClue').innerHTML = ''; $('greenWord').innerHTML = ''; $('story').innerHTML = ''; $('clueLine').textContent = '';
-    document.querySelectorAll('.obox').forEach(function (b) { b.innerHTML = ''; });
+    document.querySelectorAll('.obox').forEach(function (b) { b.innerHTML = ''; b.classList.remove('picked', 'shown'); });
     if (p.kind === 'single') { $('greenClue').textContent = p.clue; $('greenWord').innerHTML = span(p.targets[0]); }
     else if (p.kind === 'multi') {
       $('clueLine').textContent = p.clue;
       p.targets.forEach(function (t, i) { var b = document.querySelector('.obox[data-i="' + i + '"]'); if (b) b.innerHTML = span(t); });
+    } else if (p.kind === 'choice') {
+      $('clueLine').textContent = '\u201C' + p.quote + '\u201D';
+      p.choices.forEach(function (c, i) { var b = document.querySelector('.obox[data-i="' + i + '"]');
+        if (b) b.innerHTML = '<span class="choice" data-n="' + E.normalize(c) + '"><b>' + (i + 1) + '</b> ' + esc(c.toUpperCase()) + '</span>'; });
     } else {
       var st = $('story'), max = p.kind === 'storyAll' ? 170 : 150, size = p.kind === 'storyAll' ? 20 : 21;
       st.innerHTML = p.segments.map(function (s) { return s.t != null ? span(p.targets[s.t]) : s.given ? '<span class="given">' + esc(s.text) + '</span>' : esc(s.text); }).join('');
     }
-    $('instr').textContent = r.instruction + (p.missing ? '  (MISSING LETTERS!)' : '');
+    var ins = (P.instructions && P.instructions[p.kind]) || p.instruction || r.instruction;
+    $('instr').textContent = ins + (p.missing ? '  (MISSING LETTERS!)' : '');
     markNext();
     fitPuzzleText();
   }
@@ -200,6 +215,11 @@
     document.querySelectorAll('.obox').forEach(function (b) { b.style.fontSize = ''; });
     var ob = $('orangeBoxes'); ob.style.top = ''; ob.classList.remove('row3');
     fitText($('catText'), 28, 410);
+    if (p.kind === 'choice') {
+      var cq = $('clueLine'), cs = 20; cq.style.fontSize = cs + 'px';
+      while (cs > 12 && cq.offsetHeight > 108) { cs--; cq.style.fontSize = cs + 'px'; }
+      document.querySelectorAll('.obox').forEach(function (b) { var fs = 18; b.style.fontSize = fs + 'px'; while (fs > 10 && b.scrollWidth > b.clientWidth + 1) { fs--; b.style.fontSize = fs + 'px'; } });
+    }
     if (p.kind === 'story' || p.kind === 'storyAll') {
       var st = $('story'), max = p.kind === 'storyAll' ? 170 : 150, size = p.kind === 'storyAll' ? 20 : 21;
       st.style.fontSize = size + 'px';
@@ -224,13 +244,13 @@
       gc.style.fontSize = '15px';
       var ws = shrink(gw, 76, 20, function () { return gw.scrollWidth <= inner && gb.scrollHeight <= gb.clientHeight + 1; });
       shrink(gc, Math.min(30, Math.max(16, Math.round(ws * 0.45))), 12, fits);
-    } else if (p.kind === 'multi') {
-      var cl = $('clueLine'), ob = $('orangeBoxes');
-      shrink(cl, 24, 12, function () { return cl.scrollHeight <= 56; });
+    } else if (p.kind === 'multi' || p.kind === 'choice') {
+      var cl = $('clueLine'), ob = $('orangeBoxes'), clMax = p.kind === 'choice' ? Math.max(40, Math.min(170, $('instr').offsetTop - cl.offsetTop - 3 * 36 - 34)) : 56;
+      shrink(cl, 24, 12, function () { return cl.scrollHeight <= clMax; });
       ob.style.top = (cl.offsetTop + cl.offsetHeight + 10) + 'px';
-      ob.classList.toggle('row3', ob.clientHeight < 2 * 50 + 12);    // short on space: one row of three
+      ob.classList.toggle('row3', p.kind !== 'choice' && ob.clientHeight < 2 * 50 + 12);    // short on space: one row of three
       document.querySelectorAll('.obox').forEach(function (b) {
-        shrink(b, 40, 12, function () { return b.scrollWidth <= b.clientWidth + 1 && b.scrollHeight <= b.clientHeight + 1 && parseFloat(b.style.fontSize) <= b.clientHeight * 0.62; });
+        shrink(b, p.kind === 'choice' ? 30 : 40, 12, function () { return (p.kind === 'choice' && b.firstChild ? b.firstChild.offsetWidth + 30 : b.scrollWidth) <= b.clientWidth + 1 && b.scrollHeight <= b.clientHeight + 1 && parseFloat(b.style.fontSize) <= b.clientHeight * 0.62; });
       });
     } else {
       shrink($('story'), p.kind === 'storyAll' ? 34 : 36, 11, fits);
@@ -239,6 +259,9 @@
   }
   function markWord(id, cls) {
     var p = game.currentPuzzle(), t = p && p.targets[id]; if (!t || !t.answer) return;
+    if (p.kind === 'choice') {              // light up the right name
+      document.querySelectorAll('.choice[data-n="' + t.answer + '"]').forEach(function (el) { el.className = 'choice ' + cls; el.parentNode.classList.add(cls === 'solved' ? 'picked' : 'shown'); }); return;
+    }
     document.querySelectorAll('.scr[data-t="' + id + '"]').forEach(function (el) { el.textContent = t.answer; el.className = 'scr ' + cls; });
   }
   function markNext() {                       // storybooks: highlight the earliest unsolved word as a hint (any order is accepted)
@@ -334,14 +357,20 @@
     switch (ev.type) {
       case 'countdown':
         clearAnim(); $('standings').hidden = true;
-        setScreen('countdown', 'lobby'); $('cdSec').textContent = (P.classic && ev.seconds < 10 ? '0' : '') + ev.seconds; A.play('tick3'); break;
+        // the countdown ticks every second, but its sound starts ONCE, when the countdown appears, and plays through
+        if (stage.dataset.screen !== 'countdown') { A.themeStop(); if (S.music) A.themeStart(); else A.play('tick3'); }
+        setScreen('countdown', 'lobby'); $('cdSec').textContent = (P.classic && ev.seconds < 10 ? '0' : '') + ev.seconds; break;
       case 'roundIntro':
         clearAnim(); $('standings').hidden = true; setScreen('intro', 'back');
         $('introImg').innerHTML = P.classic ? '<img src="classic/assets/img/getrd' + ev.round + '.png" alt="">' : ART.introCard(ev.round);
         $('introTitle').textContent = ev.title; $('introCat').innerHTML = '<small>CATEGORY</small>' + esc(ev.category);
-        $('introInstr').textContent = ev.instruction; A.play('update'); break;
+        var rk = (E.ROUND_DEFAULTS[ev.round] || {}).kind;
+        $('introInstr').textContent = (P.instructions && P.instructions[rk]) || ev.instruction;
+        if (P.sounds && P.sounds.introTheme) { if (S.music && (ev.round > 1 || !A.themePlaying())) A.themeStart(); }   // classic: the theme on every round's get-ready card
+        else A.play('update');
+        break;
       case 'puzzle':
-        clearAnim(); $('standings').hidden = true; renderPuzzle(ev.puzzle, g.currentRound());
+        clearAnim(); $('standings').hidden = true; A.themeFade(); renderPuzzle(ev.puzzle, g.currentRound());
         $('progress').textContent = 'Round ' + g.currentRound().round + ' \u00b7 puzzle ' + (ev.index + 1) + ' of ' + ev.count;
         setFeedback(''); setScore(g.score); boxFlash(null); resetBirds(); renderStrip(g.players);
         $('clockNum').className = ''; focusInput(); later(focusInput, 60); break;
@@ -354,7 +383,7 @@
         markNext(); break;
       case 'restored': markWord(ev.target.id, 'solved'); markNext(); break;
       case 'reveal':                          // storybook auto-unscramble: a free hint, scores nothing
-        markWord(ev.id, 'hint'); markNext(); A.play('update'); break;
+        markWord(ev.id, 'hint'); markNext(); A.play('hint'); break;
       case 'skipped':
         pending = pending.slice(3); renderBox(); boxFlash(null);
         setFeedback('"' + ev.chunk + '" WAS ALREADY UNSCRAMBLED - NO PENALTY', 'time'); break;
@@ -374,13 +403,14 @@
       case 'puzzleEnd':
         if (ev.reason === 'done' && birdMode === 'walk') freezeBirds();
         ev.reveal.forEach(function (id) { markWord(id, 'revealed'); });
-        later(function () { showStandings(ev.standings); A.play('tally'); }, Math.min(1400, ev.revealMs / 3)); break;
+        later(function () { showStandings(ev.standings); A.play('tally'); }, Math.min(1400, ev.revealMs / 3)); break;   // the scores update
       case 'finished': clearAnim(); showEnd(ev); break;
     }
   }
+  // A failed puzzle: after the crash/fall, show every missed word unscrambled at once (no typing sound);
+  // the engine holds the screen cfg.failShowMs before moving on.
   function revealQueue(ids) {
-    var p = game.currentPuzzle();
-    ids.forEach(function (id) { enqueue({ kind: 'reveal', id: id, answer: p.targets[id].answer, from: 0 }); });
+    enqueue({ kind: 'fn', fn: function () { ids.forEach(function (id) { markWord(id, 'revealed'); }); } });
   }
 
   // ---------- end screens ----------
@@ -410,7 +440,7 @@
       $('endStats').textContent = s.wordsSolved + ' of ' + s.wordsTotal + ' words \u00b7 ' + s.puzzlesSolved + ' of ' + s.played + ' puzzles \u00b7 ' + s.timeouts + ' crashes \u00b7 ' + s.percent + '% of max';
       $('endBest').textContent = s.score > prevBest && s.score > 0 ? '\u2605 NEW HIGH SCORE! \u2605' : place >= 0 ? 'High-score table: #' + (place + 1) : 'Best: ' + prevBest;
     }
-    A.play('tally'); if (S.music) setTimeout(function () { if (stage.dataset.screen === 'end') A.themeStart(); }, 500);
+    A.play('final'); if (S.music) setTimeout(function () { if (stage.dataset.screen === 'end') A.themeStart(); }, 500);
     showBest();
   }
 
@@ -436,7 +466,7 @@
   function startSolo() {
     A.unlock(); A.themeStop(); leaveRoom(true); mode = 'solo';
     var cfg = { letterMs: +S.speed || 140 };
-    if (params.get('fast')) Object.assign(cfg, { countdownMs: 1200, roundIntroMs: 600, correctPauseMs: 600, failLeadMs: 500, revealTailMs: 300, letterMs: 45, wordHoldMs: 120, revealGapMs: 150 });
+    if (params.get('fast')) Object.assign(cfg, { countdownMs: 1200, roundIntroMs: 600, correctPauseMs: 600, failLeadMs: 500, revealTailMs: 300, failShowMs: 900, letterMs: 45, wordHoldMs: 120, revealGapMs: 150 });
     var seed = params.get('seed'), rng = Math.random;
     if (seed) { var x = +seed || 1; rng = function () { x = (x * 1664525 + 1013904223) % 4294967296; return x / 4294967296; }; }
     game = new E.Game(data, { config: cfg, rng: rng }); game.on(onEvent);

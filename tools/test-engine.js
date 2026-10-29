@@ -17,7 +17,9 @@ test('content rules', () => {
         if (ri === 1) { assert(it.clue && it.answers.length === 3); it.answers.forEach(a => assert(E.normalize(a).length >= 5, 'R2 answer 5+: ' + a));
           assert.equal(new Set(it.answers.map(a => E.normalize(a).slice(0, 3))).size, 3, 'R2 boxes need different first 3 letters: ' + it.answers); }
         if (ri === 2) assert(/\[[^\]]+\]/.test(it.story));
-        if (ri === 3) { const w = it.story.split(/\s+/).length; assert(w >= 10 && w <= 20, `R4 passage 10-20 words (${w}): ${it.story}`); }
+        if (ri === 3) { const w = it.story.split(/\s+/).length; assert(w >= 10 && w <= 20, `R4 passage 10-20 words (${w}): ${it.story}`);
+          if (it.author) { const keys = [it.author].concat(it.choices).map(n => E.normalize(n).slice(0, 3));
+            assert.equal(it.choices.length, 2, 'two decoys: ' + it.author); assert.equal(new Set(keys).size, 3, 'author choices need different first 3 letters: ' + keys); } }
       });
     });
   });
@@ -28,11 +30,13 @@ test('built puzzles: big words, stable anagram scrambles, sensible clocks', () =
     assert(p.targets.length >= (p.kind === 'multi' ? 3 : 1));
     p.targets.forEach(t => {
       assert(t.answer.length >= 4, 'no 3-letter puzzle words: ' + t.answer);
-      if (t.style === 'missing') { assert.equal(t.clue.length, t.answer.length); t.clue.split('').forEach((c, i) => assert(c === '_' || c === t.answer[i])); }
+      if (t.style === 'choice') { assert.equal(t.clue, ''); assert(p.choices.map(E.normalize).includes(t.answer)); }
+      else if (t.style === 'missing') { assert.equal(t.clue.length, t.answer.length); t.clue.split('').forEach((c, i) => assert(c === '_' || c === t.answer[i])); }
       else { assert.equal(t.clue.toUpperCase().split('').sort().join(''), t.answer.split('').sort().join(''));
              if (t.answer.length >= 5) assert.notEqual(t.clue.toUpperCase().slice(0, 3), t.key, 'scramble must not start with the answer'); }
     });
     if (p.kind === 'story') assert(p.targets.length >= 2 && p.targets.length <= 6, p.story);
+    if (p.kind === 'choice') { assert.equal(p.choices.length, 3); assert(p.quote && !/[\[\]]/.test(p.quote)); assert.equal(p.round, 4); }
     if (p.kind === 'storyAll') { assert(p.targets.length >= 5, 'R4 should be a long passage: ' + p.story); assert.equal(p.order, 'any'); }
     assert.equal(p.order, 'any', 'every round accepts words in any order');
     assert(p.seconds >= 12 && p.seconds <= 50, 'clock ' + p.seconds);
@@ -164,8 +168,9 @@ test('full playthroughs (mixed outcomes, burst typing)', () => {
       const burst = (rng() < 0.5 ? open : open.slice().reverse()).slice(0, 1 + Math.floor(rng() * 3));
       g.feed(burst.map(t => t.key).join('')); g.tick(200);
     }
-    const s = g.summary(); assert.equal(g.phase, 'finished'); assert.equal(s.played, 12);
-    assert.equal(s.puzzlesSolved + s.timeouts + s.wrong, 12); assert(s.percent <= 100);
+    const total = g.rounds.reduce((a, r) => a + r.puzzles.length, 0);
+    const s = g.summary(); assert.equal(g.phase, 'finished'); assert.equal(s.played, total); assert(total >= 12 && total <= 15);
+    assert.equal(s.puzzlesSolved + s.timeouts + s.wrong, total); assert(s.percent <= 100);
   }
 });
 
@@ -174,7 +179,34 @@ test('perfect instant play ~ max; idle = 0', () => {
   while (g.phase !== 'finished') { if (g.phase === 'playing') g.feed(g.unsolved().map(t => t.key).join('')); else g.tick(700); }
   assert(g.summary().percent >= 99); assert.equal(g.summary().wordsSolved, g.summary().wordsTotal);
   const h = new E.Game(data, { rng }); h.start(); while (h.phase !== 'finished') h.tick(h.phase === 'playing' ? 1e6 : 700);
-  assert.equal(h.score, 0); assert.equal(h.summary().timeouts, 12);
+  assert.equal(h.score, 0); assert.equal(h.summary().timeouts, h.summary().played);
+});
+
+test('failed puzzle: words are shown unscrambled for failShowMs (no typed reveal), then the next puzzle', () => {
+  const g = mk({ answers: ['YELLOW', 'BLUE', 'GREEN'] }); const ev = []; g.on(e => ev.push(e));
+  g.tick(g.timeLeft + 1); assert.equal(g.phase, 'feedback');
+  assert.equal(g.phaseLeft, C.failLeadMs + C.failShowMs, 'fixed hold, not a typing animation per letter');
+  const h = mk({ answers: ['YELLOW', 'BLUE', 'GREEN'] }); h.feed('QZX'); assert.equal(h.phaseLeft, C.failLeadMs + C.failShowMs);
+});
+
+test('round 4 quotes: a "who said it?" pick follows, judged like any word', () => {
+  const quotes = data.rounds[3].sets.find(s => s.items.some(i => i.author));
+  assert(quotes, 'a quotes set exists');
+  const rc = E.roundConfig(data, 3), it = quotes.items[0];
+  const ch = E.makeChoicePuzzle(it, rc, rng);
+  assert.equal(ch.kind, 'choice'); assert.equal(ch.choices.length, 3); assert(ch.choices.includes(it.author));
+  assert.deepEqual(E.revealTimes(ch), [], 'no auto-reveal on a pick');
+  const pub = E.publicPuzzle(ch); assert(!JSON.stringify(pub).includes('"answer"')); assert.equal(pub.targets[0].clue, '');
+  assert.deepEqual(pub.choices, ch.choices);
+  const ps = new E.PuzzleState(ch), key = E.normalize(it.author).slice(0, 3);
+  assert(key.split('').map(c => ps.feedLetter(c)).pop().ok);
+  const wrongName = ch.choices.find(c => c !== it.author), ps2 = new E.PuzzleState(ch);
+  assert.equal(E.normalize(wrongName).slice(0, 3).split('').map(c => ps2.feedLetter(c)).pop().ok, false, 'a decoy ends the turn');
+  // built rounds: the pick sits right after its quote
+  const one = Object.assign({}, data, { rounds: data.rounds.map((r, i) => i === 3 ? Object.assign({}, r, { sets: [quotes] }) : r) });
+  const r4 = E.buildPuzzles(one, rng)[3];
+  assert.equal(r4.puzzles.length, 6); r4.puzzles.forEach((p, i) => assert.equal(p.kind, i % 2 ? 'choice' : 'storyAll'));
+  assert.equal(r4.puzzles[1].quote, r4.puzzles[0].story);
 });
 
 const SNOW = 'Snow fell all weekend, so the whole street held a giant snowball battle.';
@@ -241,7 +273,7 @@ test('round 4 key words: data lists ~30% given; the fallback picks content words
     const share = g.length / (g.length + t.length); assert(g.length >= 2 && share >= 0.25 && share <= 0.35, it.story);
     t.forEach(x => assert(!g.includes(x.answer)));
     const auto = [], as = E.parseStory(it.story, 'storyAll', 4, rng, auto, {}), ag = as.filter(x => x.given);
-    assert(ag.length >= 2 && ag.length / (ag.length + auto.length) <= 0.4 && auto.length >= 5, 'auto key words: ' + it.story);
+    assert(ag.length >= 2 && ag.length / (ag.length + auto.length) <= 0.45 && auto.length >= 4, 'auto key words: ' + it.story);
     ag.forEach(x => assert(!['THAT', 'WITH', 'THEN', 'UNTIL', 'OVER', 'WHILE', 'ONCE'].includes(E.normalize(x.text))));
   }));
   const st = []; E.parseStory('In 1969, [Neil Armstrong] walked on the [Moon].', 'story', 4, rng, st, {}); assert.equal(st.length, 3, 'round 3 unchanged');

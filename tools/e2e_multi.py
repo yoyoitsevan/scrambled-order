@@ -15,6 +15,7 @@ def walk(o):
     elif isinstance(o, list): [walk(x) for x in o]
     elif isinstance(o, dict): [walk(v) for k, v in o.items() if k != '_readme']
 walk(data['rounds'])
+AUTHORS = {it['story']: it['author'] for st in data['rounds'][3]['sets'] for it in st['items'] if it.get('author')}
 def solve(t):
     clue = t['clue'].upper()
     if t['style'] == 'missing':
@@ -68,6 +69,10 @@ with sync_playwright() as p:
             if last_typed[n] == key: continue
             last_typed[n] = key
             un = pg.evaluate(G + '.unsolved()')
+            pz = pg.evaluate(G + '.currentPuzzle()')
+            if pz['kind'] == 'choice':          # "who said it?": type the number of the right name
+                if n == 0: shot(pg, 'choice', '36-mp-who-said-it.png')
+                pg.keyboard.type(str(pz['choices'].index(AUTHORS[pz['quote']]) + 1)); stats['picks'] = stats.get('picks', 0) + 1; continue
             if n == 2 and st['r'] == 2 and st['i'] == 0 and not stats['reloaded']:
                 pg.reload(); pg.wait_for_function("window.OOO && window.OOO.game && window.OOO.game.phase==='playing'", timeout=15000)
                 stats['reloaded'] = True; last_typed[n] = None; continue   # rejoins the same seat, same puzzle

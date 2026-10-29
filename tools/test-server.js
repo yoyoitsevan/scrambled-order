@@ -190,7 +190,7 @@ function hintTests() {
     assert.equal(end.answers.length, pz.targets.length);
     const ra = end.results.find(r => r.id === ja.you.id); assert.equal(ra.solved, pz.targets.length);
   }
-  assert.equal(puzzles, 12); assert(!leaked, 'no answers in puzzle messages');
+  assert.equal(puzzles, room.rounds.reduce((n, r) => n + r.puzzles.length, 0)); assert(puzzles >= 12); assert(!leaked, 'no answers in puzzle messages');
   assert(sawTimeOrDone.done > 0 && sawTimeOrDone.time > 0, JSON.stringify(sawTimeOrDone));
   const st = fin.standings; assert.equal(st.length, 3);
   assert.equal(st[0].id, ja.you.id, 'fastest player wins'); assert(st[0].score > st[1].score);

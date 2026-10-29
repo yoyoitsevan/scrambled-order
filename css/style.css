@@ -128,6 +128,16 @@ button { font-family: inherit; cursor: pointer; }
 .obox .scr { text-decoration: none; }
 .obox .scr.solved { color: #fff; text-shadow: 0 0 6px #ffe94d, 2px 2px 0 #7a2c00; }
 .obox .scr.revealed { color: #ffe0dc; }
+/* round 4 "who said it?": the quote on top, three numbered names in a row */
+#stage.k-choice #clueLine { top: 112px; line-height: 1.3; font-size: 20px; }
+#stage.k-choice .obox { width: 196px; height: 52px; top: 230px; padding: 0 6px; background-size: 100% 100%; letter-spacing: 0; white-space: nowrap; overflow: hidden; display: flex; align-items: center; justify-content: flex-start; }
+#stage.k-choice .obox[data-i="0"] { left: 14px; } #stage.k-choice .obox[data-i="1"] { left: 222px; } #stage.k-choice .obox[data-i="2"] { left: 430px; }
+.choice { flex: none; }
+.choice b { display: inline-block; min-width: 1.3em; margin-right: 4px; border-radius: 4px; background: #ffe94d; color: #3a1500; text-shadow: none; }
+.choice.solved { color: #fff; text-shadow: 0 0 6px #ffe94d, 2px 2px 0 #7a2c00; }
+.choice.revealed { color: #ffe0dc; text-decoration: underline; }
+#stage.k-choice .obox.picked { box-shadow: 0 0 0 4px #5cff6c, 0 0 18px #5cff6c; }
+#stage.k-choice .obox.shown { box-shadow: 0 0 0 4px #ff8a80, 0 0 14px #ff8a80; }
 @keyframes pop { 0% { transform: scale(.85); } 60% { transform: scale(1.12); } 100% { transform: scale(1); } }
 .scr { display: inline-block; }
 
@@ -339,6 +349,8 @@ button { font-family: inherit; cursor: pointer; }
 #viewport.portrait #stage.k-multi #orangeBoxes.row3 { grid-template-columns: repeat(3, 1fr); grid-template-rows: minmax(0, 64px); gap: 6px; }
 #viewport.portrait #orangeBoxes.row3 .obox[data-i="2"] { grid-column: auto; justify-self: stretch; width: auto; }
 #viewport.portrait #orangeBoxes.row3 .obox { letter-spacing: 1px; }
+#viewport.portrait #stage.k-choice #orangeBoxes { grid-template-columns: 1fr; grid-template-rows: repeat(3, minmax(0, 58px)); gap: 10px; }
+#viewport.portrait #stage.k-choice .obox, #viewport.portrait #stage.k-choice .obox[data-i="2"] { grid-column: auto; justify-self: stretch; width: auto; height: 100%; top: auto; left: auto; }
 #viewport.portrait #instr { left: 6px; right: 6px; width: auto; top: auto; bottom: 72px; font-size: 13px; white-space: nowrap; overflow: hidden; }
 #viewport.portrait #feedback { left: 0; width: 100%; top: auto; bottom: 70px; height: 24px; line-height: 24px; font-size: 19px; }
 #viewport.portrait #stage.fb #instr { visibility: hidden; }

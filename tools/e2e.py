@@ -73,7 +73,8 @@ with sync_playwright() as p:
     sm = pg.evaluate(G + '.summary()')
     print('summary', {k: sm[k] for k in ('score', 'maxScore', 'rank', 'puzzlesSolved', 'timeouts', 'wrong', 'played', 'wordsSolved', 'wordsTotal')})
     print('checks', checks)
-    assert sm['played'] == 12 and sm['wrong'] == 1 and sm['timeouts'] == 1 and sm['puzzlesSolved'] == 10, sm
+    total = pg.evaluate(G + '.rounds.reduce((n, r) => n + r.puzzles.length, 0)')
+    assert sm['played'] == total >= 12 and sm['wrong'] == 1 and sm['timeouts'] == 1 and sm['puzzlesSolved'] == total - 2, sm
     assert checks['wrongStatus'] == 'wrong' and checks['whistles'] == 1, checks
     assert checks['typecount'][0] == checks['typecount'][1], 'one typing sound per letter, none dropped'
     hs = pg.evaluate("JSON.parse(localStorage.getItem('ooo.scores')||'[]')")
