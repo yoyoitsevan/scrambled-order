@@ -47,6 +47,10 @@ The `mobile/` folder wraps this same client as native apps with Capacitor (app i
 * `python tools/measure_audio.py`: prints sound levels for normalization.
 * Art source: `python3 tools/make_art.py` regenerates `assets/svg/`.
 
+## State machines
+
+Room, player, solo and multiplayer phase, socket, screen, connection, birds, modals and the lobby form each have one state and one transition table in `js/machines.js`. The server and the browser share that file. [docs/state-machines.md](docs/state-machines.md) lists every machine and the pattern for adding one.
+
 ## Deploying (not done yet)
 Any host that runs one long-lived Node process with WebSockets will work. It reads `PORT`, the health check is `/healthz`, and a `Dockerfile` is included. Rooms live in memory, so run a **single instance**.
 * **Render:** New Web Service. Build `npm install`, start `npm start`, health path `/healthz`.

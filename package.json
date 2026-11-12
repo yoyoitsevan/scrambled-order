@@ -6,7 +6,7 @@
   "main": "server/server.js",
   "scripts": {
     "start": "node server/server.js",
-    "test": "node tools/test-engine.js && node tools/test-server.js",
+    "test": "node tools/test-machines.js && node tools/test-engine.js && node tools/test-server.js",
     "build-data": "python3 tools/build_data.py"
   },
   "engines": { "node": ">=18" },

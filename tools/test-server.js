@@ -22,6 +22,13 @@ const type = t => m => m.t === t;
 
 // Latency fairness, with a fake clock: a far player's typing is judged when it was typed (its `at`),
 // trusted only within its measured latency, capped; the puzzle goes out ahead with startsAt/endsAt.
+// A fresh attempt at the current puzzle. beginPuzzle only runs from intro or reveal.
+function restartPuzzle(room) {
+  if (room.state === 'playing') room.endPuzzle('time');
+  room.beginPuzzle(0);
+  clearTimeout(room.timer);
+  room.clearReveals();
+}
 function latencyTests() {
   const { Room, NET } = require('../server/room.js');
   const E = require('../js/engine.js');
@@ -45,7 +52,7 @@ function latencyTests() {
   assert(sn && sf, 'both solved'); assert.equal(sf.points, sn.points, 'same points for the same typing moment');
   const expect = E.pointsFor(pz.base, (pm.endsAt - typed) / pm.durationMs, room.cfg); assert.equal(sn.points, expect);
   // a stamp claiming more than the allowance is clamped (no time travel), a stamp in the future is ignored
-  room.beginPuzzle(0); clearTimeout(room.timer); out.far.length = 0; out.near.length = 0;
+  restartPuzzle(room); out.far.length = 0; out.near.length = 0;
   const pz2 = room.puzzle(), k2 = pz2.targets[0].answer.slice(0, 3), st2 = room.startsAt, dur2 = pz2.seconds * 1000;
   T = st2 + 5000; room.letters(far, k2, st2);                        // claims it typed at the very start
   const cheat = out.far.find(m => m.t === 'solved');
@@ -54,7 +61,7 @@ function latencyTests() {
   const fut = out.near.find(m => m.t === 'solved');
   assert.equal(fut.points, E.pointsFor(pz2.base, (room.endsAt - T) / dur2, room.cfg));
   // after the buzzer: typed in time (still in flight) counts, typed late does not
-  room.beginPuzzle(0); clearTimeout(room.timer); out.far.length = 0; out.near.length = 0;
+  restartPuzzle(room); out.far.length = 0; out.near.length = 0;
   const k3 = room.puzzle().targets[0].answer.slice(0, 3);
   T = room.endsAt + 250; room.letters(far, k3, room.endsAt - 40);
   assert(out.far.find(m => m.t === 'solved'), 'typed 40 ms before the buzzer, arrived after: counts');
@@ -62,7 +69,7 @@ function latencyTests() {
   assert(!out.near.find(m => m.t === 'solved' || m.t === 'wrong'), 'typed after the buzzer: ignored');
   assert.equal(room.graceMs(), room.allowance(near) /* far is done */);
   // no stamp (older client): judged at arrival minus the measured one-way latency, capped
-  room.beginPuzzle(0); clearTimeout(room.timer); out.far.length = 0;
+  restartPuzzle(room); out.far.length = 0;
   const k4 = room.puzzle().targets[0].answer.slice(0, 3); T = room.startsAt + 3000; room.letters(far, k4, NaN);
   assert.equal(out.far.find(m => m.t === 'solved').points, E.pointsFor(room.puzzle().base, (room.endsAt - (T - 300)) / (room.puzzle().seconds * 1000), room.cfg));
   room.destroy();
@@ -79,7 +86,8 @@ function hintTests() {
   const near = room.addPlayer('Near', m => out.near.push(m)).player, far = room.addPlayer('Far', m => out.far.push(m)).player;
   for (let i = 0; i < 5; i++) { room.noteRtt(near, 20); room.noteRtt(far, 600); }
   room.start(near); clearTimeout(room.timer);
-  room.roundIdx = 3; room.puzzleIdx = 0; room.beginPuzzle(0); clearTimeout(room.timer); room.clearReveals();
+  room.roundIdx = 3; room.puzzleIdx = 0; room.roundIntro(); clearTimeout(room.timer);
+  room.beginPuzzle(0); clearTimeout(room.timer); room.clearReveals();
   const pz = room.puzzle(), dur = pz.seconds * 1000, times = E.revealTimes(pz, room.cfg);
   assert.equal(pz.kind, 'storyAll'); assert(times.length >= 2, 'round 4 schedules reveals');
   assert(pz.segments.filter(s => s.given).length >= 2, 'round 4 shows key words');

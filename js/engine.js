@@ -11,9 +11,10 @@
  *    If two unsolved words share their first three letters, the earliest one is solved first.
  */
 (function (root, factory) {
-  if (typeof module === 'object' && module.exports) module.exports = factory();
-  else root.OOOEngine = factory();
-})(typeof self !== 'undefined' ? self : this, function () {
+  var M = typeof module === 'object' && module.exports ? require('./machines') : root.OOOMachines;
+  if (typeof module === 'object' && module.exports) module.exports = factory(M);
+  else root.OOOEngine = factory(M);
+})(typeof self !== 'undefined' ? self : this, function (M) {
   'use strict';
 
   // kind: single = clue + 1 word | multi = clue + 3 words (orange boxes, any order)
@@ -266,6 +267,13 @@
   PuzzleState.prototype.solvedCount = function () { return Object.keys(this.solved).length; };
   PuzzleState.prototype.next = function () { return this.unsolved()[0] || null; };
   PuzzleState.prototype.done = function (t) { return this.failed || this.unsolved(t).length === 0; };
+  // Derived attempt label (js/machines.js). Not stored, so it cannot drift from failed/buffer/solved.
+  PuzzleState.prototype.label = function (t) {
+    if (this.failed) return 'failed';
+    if (this.puzzle.targets.length && this.unsolved(t).length === 0) return 'complete';
+    if (this.buffer) return 'buffering';
+    return 'ready';
+  };
   // returns null (still buffering), {ok:true, target, startedAt}, {ok:false, chunk} or
   // {given:true, chunk, target} (the word was auto-revealed: the chunk is dropped, no penalty)
   PuzzleState.prototype.feedLetter = function (c, t) {
@@ -306,6 +314,7 @@
     this.listeners.forEach(function (fn) { fn(ev, this); }, this);
   };
   Game.prototype.reset = function () {
+    // Force idle from any phase. This is the start-over edge, not a round transition.
     this.phase = 'idle'; this.score = 0; this.roundIdx = 0; this.puzzleIdx = 0;
     this.phaseLeft = 0; this.timeLeft = 0; this.timeTotal = 0; this.holdLeft = 0;
     this.attempt = null; this.lastResult = null; this.results = []; this._lastSec = null; this.paused = false; this._pts = 0;
@@ -318,8 +327,12 @@
     var t = this.elapsed(), st = this.attempt.startedAt, te = valueTime(st, t, this.cfg);
     return { points: pointsFor(p.base, 1 - te / this.timeTotal, this.cfg), frozen: st != null && te === st };
   };
+  Game.prototype._phase = function (to) {
+    var r = M.apply('phase', this, 'phase', to);
+    if (!r.ok) throw new Error(r.error);
+  };
   Game.prototype.start = function () {
-    this.reset(); this.phase = 'countdown'; this.phaseLeft = this.cfg.countdownMs;
+    this.reset(); this._phase('countdown'); this.phaseLeft = this.cfg.countdownMs;
     this._emit('countdown', { seconds: Math.ceil(this.phaseLeft / 1000) });
   };
   Game.prototype.currentRound = function () { return this.rounds[this.roundIdx]; };
@@ -330,7 +343,7 @@
     var self = this; return targets.reduce(function (a, t) { return a + self.fillMs(t.answer.length) + self.cfg.revealGapMs; }, 0);
   };
   Game.prototype._beginRoundIntro = function () {
-    this.phase = 'roundIntro'; this.phaseLeft = this.roundIdx > 0 && this.cfg.roundIntroNextMs != null ? this.cfg.roundIntroNextMs : this.cfg.roundIntroMs;
+    this._phase('roundIntro'); this.phaseLeft = this.roundIdx > 0 && this.cfg.roundIntroNextMs != null ? this.cfg.roundIntroNextMs : this.cfg.roundIntroMs;
     var r = this.currentRound();
     this._emit('roundIntro', { round: r.round, title: r.title, category: r.category, instruction: r.instruction });
   };
@@ -338,7 +351,7 @@
     var p = this.currentPuzzle();
     this.revealAt = {}; this.attempt = new PuzzleState(p, this.revealAt);
     this._revealPlan = revealTimes(p, this.cfg); this._revealIdx = 0;
-    this.phase = 'playing'; this.holdLeft = 0; this._pts = 0;
+    this._phase('playing'); this.holdLeft = 0; this._pts = 0;
     this.timeTotal = this.timeLeft = p.seconds * 1000; this._lastSec = Math.ceil(this.timeLeft / 1000);
     this._emit('puzzle', { puzzle: p, index: this.puzzleIdx, count: this.currentRound().puzzles.length });
   };
@@ -348,7 +361,7 @@
       revealed: Object.keys(this.revealAt).length,
       total: p.targets.length, points: this._pts, answers: p.targets.map(function (t) { return t.answer; }),
       secondsUsed: +((this.timeTotal - this.timeLeft) / 1000).toFixed(2) }, extra || {});
-    this.results.push(res); this.lastResult = res; this.phase = 'feedback';
+    this.results.push(res); this.lastResult = res; this._phase('feedback');
     var queued = this.holdLeft; this.holdLeft = 0;      // fills already queued on screen still play out
     this.phaseLeft = queued + (status === 'correct' ? this.cfg.correctPauseMs
       : this.cfg.failLeadMs + this.cfg.failShowMs);
@@ -358,7 +371,7 @@
     var r = this.currentRound();
     if (this.puzzleIdx + 1 < r.puzzles.length) { this.puzzleIdx++; this._beginPuzzle(); return; }
     if (this.roundIdx + 1 < this.rounds.length) { this._emit('roundEnd', { round: r.round }); this.roundIdx++; this.puzzleIdx = 0; this._beginRoundIntro(); return; }
-    this.phase = 'finished'; this._emit('finished', { summary: this.summary() });
+    this._phase('finished'); this._emit('finished', { summary: this.summary() });
   };
   Game.prototype.setPaused = function (p) { this.paused = !!p; };
   Game.prototype.tick = function (ms) {

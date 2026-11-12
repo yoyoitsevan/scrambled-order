@@ -9,6 +9,7 @@ const http = require('http');
 const express = require('express');
 const { WebSocketServer } = require('ws');
 const { Room, CODE_CHARS } = require('./room');
+const M = require('../js/machines');
 
 const ROOT = path.join(__dirname, '..');
 const data = JSON.parse(fs.readFileSync(path.join(ROOT, 'data', 'puzzles.json'), 'utf8'));
@@ -49,6 +50,8 @@ function createServer(opts = {}) {
 
   wss.on('connection', (ws, req) => {
     let room = null, me = null;
+    const link = { seat: 'out' };          // js/machines.js seat: create/join only while 'out'
+    const enterSeat = (to) => M.apply('seat', link, 'seat', to).ok;
     try { (req && req.socket || ws._socket).setNoDelay(true); } catch (e) {}   // small messages go out at once (ws does this too)
     const send = (m) => { if (ws.readyState === 1) ws.send(JSON.stringify(m)); };
     // protocol-level pings (answered by the browser's network stack) measure each player's round trip
@@ -65,22 +68,24 @@ function createServer(opts = {}) {
       let m; try { m = JSON.parse(raw); } catch (e) { return; }
       if (!m || typeof m.t !== 'string') return;
       if (m.t === 'ping') return send({ t: 'pong', id: m.id, serverNow: Date.now() });
-      if (!me) {
+      if (link.seat === 'out') {
         if (m.t === 'create') {
           room = new Room(newCode(), data, { fast: !!m.fast }); room.onEmpty = getRoomEmptyHandler(room);
           rooms.set(room.code, room);
           const r = room.addPlayer(m.name, send); me = r.player;
-          return send({ t: 'joined', you: { id: me.id, token: me.token }, room: room.snapshot(me) });
+          enterSeat('in');
+          return send({ t: 'joined', you: { id: me.id, token: me.token }, room: room.snapshot(me), serverNow: Date.now() });
         }
         if (m.t === 'join') {
           const code = String(m.code || '').toUpperCase().trim();
           const rm = rooms.get(code);
           if (!rm) return send({ t: 'error', code: 'noroom', msg: 'No room with code ' + code + '.' });
-          if (m.token) { const p = rm.reconnect(m.token, send); if (p) { room = rm; me = p; return send({ t: 'joined', you: { id: p.id, token: p.token }, room: rm.snapshot(p), rejoined: true }); } }
+          if (m.token) { const p = rm.reconnect(m.token, send); if (p) { room = rm; me = p; enterSeat('in'); return send({ t: 'joined', you: { id: p.id, token: p.token }, room: rm.snapshot(p), rejoined: true, serverNow: Date.now() }); } }
           const r = rm.addPlayer(m.name, send);
           if (r.error) return send({ t: 'error', code: 'join', msg: r.error });
           room = rm; me = r.player;
-          return send({ t: 'joined', you: { id: me.id, token: me.token }, room: room.snapshot(me) });
+          enterSeat('in');
+          return send({ t: 'joined', you: { id: me.id, token: me.token }, room: room.snapshot(me), serverNow: Date.now() });
         }
         return send({ t: 'error', msg: 'Join a room first.' });
       }
@@ -91,7 +96,7 @@ function createServer(opts = {}) {
         case 'letters': room.letters(me, String(m.s || ''), Number(m.at)); break;
         case 'bs': room.backspace(me); break;
         case 'back': room.backToLobby(me); break;
-        case 'leave': room.remove(me); me = null; room = null; send({ t: 'left' }); break;
+        case 'leave': room.remove(me); me = null; room = null; enterSeat('out'); send({ t: 'left' }); break;
       }
     });
     ws.on('close', () => { if (room && me) room.disconnect(me); });

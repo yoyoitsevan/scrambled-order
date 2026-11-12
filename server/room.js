@@ -20,6 +20,7 @@
  */
 const crypto = require('crypto');
 const E = require('../js/engine.js');
+const M = require('../js/machines.js');
 
 const MAX_PLAYERS = 6, MIN_PLAYERS = 2;
 const TIMING = { countdownMs: 5000, roundIntroMs: 7400, roundIntroNextMs: 12400, revealMs: 4500, lobbyGraceMs: 30000 };
@@ -39,7 +40,7 @@ class Room {
     this.cfg = Object.assign({}, E.CONFIG, { pauseDuringFill: false });
     this.rng = opts.rng || Math.random;
     this.players = new Map(); this.order = []; this.hostId = null;
-    this.state = 'lobby'; this.chat = []; this.timer = null; this.lastActive = Date.now();
+    this.state = 'lobby'; this.epoch = 0; this.chat = []; this.timer = null; this.lastActive = Date.now();
     this.rounds = null; this.roundIdx = 0; this.puzzleIdx = 0; this.endsAt = 0; this.startedAt = 0;
     this.revealAt = {}; this.reveals = []; this.revealTimers = [];
     this.onEmpty = opts.onEmpty || (() => {});
@@ -98,6 +99,19 @@ class Room {
   connected() { return [...this.players.values()].filter(p => p.connected); }
   checkEmpty() { if (!this.connected().length) this.onEmpty(this); }
 
+  // Room and player moves go through js/machines.js. enter() bumps epoch so a timer
+  // scheduled in the previous state no-ops (see later).
+  enter(to) {
+    const r = M.apply('room', this, 'state', to);
+    if (!r.ok) return false;
+    this.epoch++;
+    return true;
+  }
+  setStatus(p, to) {
+    const r = M.apply('player', p, 'status', to);
+    return r.ok;
+  }
+
   // ---------- latency ----------
   /** A websocket round-trip sample for player p (server/server.js measures protocol pings). */
   noteRtt(p, ms) {
@@ -134,10 +148,17 @@ class Room {
       const r = this.rounds[this.roundIdx];
       s.round = { round: r.round, title: r.title, category: r.category, instruction: r.instruction, count: r.puzzles.length };
       s.puzzleIndex = this.puzzleIdx;
+      if (this.state === 'countdown') s.countdownEndsAt = this.countdownEndsAt;
       if (this.state === 'playing') {
         s.puzzle = E.publicPuzzle(this.puzzle()); s.startsAt = this.startsAt; s.endsAt = this.endsAt; s.durationMs = this.puzzle().seconds * 1000;
         s.reveals = this.reveals.slice();
         if (p && p.attempt) { s.mine = { status: p.status, buffer: p.attempt.buffer, solved: this.puzzle().targets.filter(t => p.attempt.solved[t.id]).map(t => ({ id: t.id, answer: t.answer })) }; }
+      }
+      if (this.state === 'reveal') {
+        const pz = this.puzzle();
+        s.puzzle = E.publicPuzzle(pz); s.durationMs = pz.seconds * 1000;
+        s.answers = pz.targets.map(t => ({ id: t.id, answer: t.answer }));
+        s.standings = this.standings(); s.revealEndsAt = this.revealEndsAt; s.endReason = this.endReason; s.revealMs = this.t.revealMs;
       }
       if (this.state === 'finished') s.standings = this.standings();
     }
@@ -151,20 +172,29 @@ class Room {
     if (this.state !== 'lobby') return 'Already started.';
     if (this.connected().length < MIN_PLAYERS) return 'Need at least ' + MIN_PLAYERS + ' players.';
     this.rounds = E.buildPuzzles(this.data, this.rng, this.cfg);
-    for (const x of this.players.values()) { x.score = 0; x.status = 'idle'; x.attempt = null; x.lastPts = 0; x.prevRank = 0; }
-    this.roundIdx = 0; this.puzzleIdx = 0; this.state = 'countdown'; this.startedAt = this.now();
+    for (const x of this.players.values()) { x.score = 0; this.setStatus(x, 'idle'); x.attempt = null; x.lastPts = 0; x.prevRank = 0; }
+    this.roundIdx = 0; this.puzzleIdx = 0;
+    if (!this.enter('countdown')) return 'Already started.';
+    this.startedAt = this.now();
     this.system('Game on! Good luck.');
     const end = this.now() + this.t.countdownMs;
+    this.countdownEndsAt = end;
     this.broadcast({ t: 'countdown', endsAt: end, serverNow: this.now() });
     this.broadcastRoom();
     this.later(() => this.roundIntro(), this.t.countdownMs);
     return null;
   }
-  later(fn, ms) { clearTimeout(this.timer); this.timer = setTimeout(fn, ms); }
+  // One room timer. The callback no-ops if the room has since moved to another state.
+  later(fn, ms) {
+    clearTimeout(this.timer);
+    const epoch = this.epoch;
+    this.timer = setTimeout(() => { if (this.epoch === epoch) fn(); }, Math.max(0, ms));
+  }
   puzzle() { return this.rounds[this.roundIdx].puzzles[this.puzzleIdx]; }
   roundIntro() {
+    if (this.state !== 'countdown' && this.state !== 'reveal') return;
+    if (!this.enter('intro')) return;
     const r = this.rounds[this.roundIdx];
-    this.state = 'intro';
     this.broadcast({ t: 'roundIntro', round: r.round, title: r.title, category: r.category, instruction: r.instruction });
     const introMs = this.roundIdx > 0 ? this.t.roundIntroNextMs : this.t.roundIntroMs;   // long enough for the get-ready theme to finish
     const lead = this.leadMs(introMs);
@@ -172,21 +202,22 @@ class Room {
   }
   // The puzzle goes out `lead` ms early with its start/end times: every client reveals it at startsAt.
   beginPuzzle(lead) {
+    if (this.state !== 'intro' && this.state !== 'reveal') return;
+    if (!this.enter('playing')) return;
     const pz = this.puzzle(), r = this.rounds[this.roundIdx];
-    this.state = 'playing';
     const dur = pz.seconds * 1000, now = this.now();
     lead = Math.max(0, lead || 0);
     this.startsAt = now + lead; this.endsAt = this.startsAt + dur; this.puzzleStart = this.startsAt;
     this.clearReveals(); this.revealAt = {}; this.reveals = [];
     for (const p of this.players.values()) {
-      p.attempt = new E.PuzzleState(pz, this.revealAt); p.status = 'playing'; p.puzzlePts = 0; p.judgedAt = 0;
+      p.attempt = new E.PuzzleState(pz, this.revealAt); this.setStatus(p, 'playing'); p.puzzlePts = 0; p.judgedAt = 0;
       p.puzzle = () => pz;
     }
     this.broadcast({ t: 'puzzle', round: { round: r.round, title: r.title, category: r.category, instruction: r.instruction, count: r.puzzles.length },
       index: this.puzzleIdx, puzzle: E.publicPuzzle(pz), durationMs: dur, startsAt: this.startsAt, endsAt: this.endsAt, serverNow: now });
     this.broadcastProgress();
     // at the buzzer, wait for typing still on its way from far-away players, then end the puzzle
-    this.later(() => this.later(() => this.endPuzzle('time'), this.graceMs()), lead + dur);
+    this.armBuzzer();
     // storybook auto-reveals: decided revealLeadMs before they show, so everyone sees them at `at`
     E.revealTimes(pz, this.cfg).forEach(f => {
       const at = this.startsAt + Math.round(f * dur);
@@ -195,6 +226,16 @@ class Room {
     });
   }
   clearReveals() { this.revealTimers.forEach(clearTimeout); this.revealTimers = []; }
+  // Fire endPuzzle('time') at endsAt, then the latency grace. Safe to call again if a
+  // "everyone connected is done" timer was cancelled because somebody reconnected.
+  armBuzzer() {
+    if (this.state !== 'playing') return;
+    const wait = Math.max(0, this.endsAt - this.now());
+    this.later(() => {
+      if (this.state !== 'playing') return;
+      this.later(() => this.endPuzzle('time'), this.graceMs());
+    }, wait);
+  }
   /** Pick the next storybook word to auto-reveal at server time `at` and announce it to everyone. */
   revealDue(at) {
     if (this.state !== 'playing' || at >= this.endsAt) return null;
@@ -211,7 +252,7 @@ class Room {
   revealShown(at) {
     if (this.state !== 'playing') return;
     let changed = false;
-    for (const p of this.connected()) if (p.status === 'playing' && p.attempt && p.attempt.done(at)) { p.status = 'done'; changed = true; }
+    for (const p of this.connected()) if (p.status === 'playing' && p.attempt && p.attempt.done(at)) { this.setStatus(p, 'done'); changed = true; }
     if (changed) { this.broadcastProgress(); this.checkAllDone(); }
   }
   /** Server time at which p typed this message: its stamp `at`, trusted only within p's latency allowance. */
@@ -237,10 +278,10 @@ class Room {
         const pts = E.pointsFor(pz.base, frac, this.cfg);
         p.score += pts; p.puzzlePts += pts;
         const last = p.attempt.unsolved(tj).length === 0;
-        if (last) p.status = 'done';
+        if (last) this.setStatus(p, 'done');
         p.send({ t: 'solved', targetId: r.target.id, answer: r.target.answer, points: pts, score: p.score, last });
       } else {
-        p.status = 'out';
+        this.setStatus(p, 'out');
         p.send({ t: 'wrong', chunk: r.chunk });
       }
       this.broadcastProgress();
@@ -252,7 +293,13 @@ class Room {
   checkAllDone() {
     if (this.state !== 'playing') return;
     const live = this.connected();
-    if (live.length && live.every(p => p.status !== 'playing')) this.later(() => this.endPuzzle('done'), 600);
+    if (live.length && live.every(p => p.status !== 'playing')) this.later(() => {
+      if (this.state !== 'playing') return;
+      const still = this.connected();
+      // somebody reconnected and is still solving: the early end would cut them off, so put the buzzer back
+      if (still.length && still.every(p => p.status !== 'playing')) this.endPuzzle('done');
+      else this.armBuzzer();
+    }, 600);
   }
   standings() {
     const list = [...this.players.values()].sort((a, b) => b.score - a.score);
@@ -262,9 +309,11 @@ class Room {
   }
   endPuzzle(reason) {
     if (this.state !== 'playing') return;
+    if (!this.enter('reveal')) return;
     const pz = this.puzzle();
-    this.state = 'reveal'; this.clearReveals();
-    for (const p of this.players.values()) { if (p.status === 'playing') p.status = reason === 'time' ? 'timeout' : 'out'; p.lastPts = p.puzzlePts; }
+    this.clearReveals();
+    this.endReason = reason; this.revealEndsAt = this.now() + this.t.revealMs;
+    for (const p of this.players.values()) { if (p.status === 'playing') this.setStatus(p, reason === 'time' ? 'timeout' : 'out'); p.lastPts = p.puzzlePts; }
     const st = this.standings();
     const results = [...this.players.values()].map(p => ({ id: p.id, name: p.name, points: p.puzzlePts, status: p.status,
       solved: p.attempt ? p.attempt.solvedCount() : 0 }));
@@ -277,10 +326,11 @@ class Room {
     this.later(() => this.next(lead), this.t.revealMs - lead);
   }
   next(lead) {
+    if (this.state !== 'reveal') return;
     const r = this.rounds[this.roundIdx];
     if (this.puzzleIdx + 1 < r.puzzles.length) { this.puzzleIdx++; this.beginPuzzle(lead); return; }
     if (this.roundIdx + 1 < this.rounds.length) { this.roundIdx++; this.puzzleIdx = 0; this.roundIntro(); return; }
-    this.state = 'finished';
+    if (!this.enter('finished')) return;
     const max = E.maxScoreOf(this.rounds, this.cfg);
     this.broadcast({ t: 'finished', standings: this.standings().map(s => Object.assign(s, {
       percent: max ? Math.round(100 * s.score / max) : 0, title: E.rankFor(max ? 100 * s.score / max : 0, this.cfg) })), maxScore: max });
@@ -289,8 +339,10 @@ class Room {
   }
   backToLobby(p) {
     if (p.id !== this.hostId || this.state !== 'finished') return;
-    this.state = 'lobby'; this.rounds = null;
-    for (const x of this.players.values()) { x.status = 'idle'; x.attempt = null; }
+    if (!this.enter('lobby')) return;
+    clearTimeout(this.timer); this.timer = null;
+    this.rounds = null;
+    for (const x of this.players.values()) { this.setStatus(x, 'idle'); x.attempt = null; }
     for (const x of [...this.players.values()]) if (!x.connected) this.remove(x, true);
     this.broadcastRoom();
   }
