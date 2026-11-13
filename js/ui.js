@@ -10,6 +10,8 @@
   var params = new URLSearchParams(location.search);
   var data = null, game = null, mode = 'solo', lastT = 0, kind = '';
   var net = null, myId = null, room = null;
+  var M = window.OOOMachines, screenName = 'title';
+  var lobbyForm = { status: 'idle' }, modal = { name: 'none' };
 
   // ---------- settings / high scores ----------
   var S = { sound: true, tick: true, music: true, motion: true, speed: 140, nick: '' };
@@ -88,6 +90,11 @@
   addEventListener('orientationchange', function () { setTimeout(fit, 250); });
   addEventListener('resize', fit); if (window.visualViewport) visualViewport.addEventListener('resize', fit); fit();
   function setScreen(name, scene) {
+    if (name !== screenName && !M.allows('screen', screenName, name)) {
+      console.warn('screen ' + screenName + ' → ' + name + ' is not allowed');
+      return;
+    }
+    screenName = name;
     stage.dataset.screen = name;
     stage.className = 'prof-' + P.id + ' scene-' + (scene || 'back') + (name === 'play' && kind ? ' k-' + kind : '') + (mode === 'multi' ? ' mp' : '') + ($('feedback').textContent ? ' fb' : '');
     if (name === 'play') focusInput();
@@ -281,8 +288,13 @@
   }
   function placeBirds(f) { f = Math.max(0, Math.min(1, f)); birdL.style.left = (L0 + (ML - L0) * f) + 'px'; birdR.style.left = (R0 + (MR - R0) * f) + 'px'; }
   var birdFrame = -1;
+  function setBirdMode(next) {
+    if (next !== birdMode && !M.allows('bird', birdMode, next)) return false;
+    birdMode = next;
+    return true;
+  }
   function resetBirds() {
-    birdGeometry(); birdMode = 'walk'; birdFrame = -1; crash.className = '';
+    birdGeometry(); setBirdMode('walk'); birdFrame = -1; crash.className = '';
     [birdL, birdR].forEach(function (b) { b.className = 'bird'; b.style.visibility = 'visible'; b.style.transform = ''; });
     placeBirds(0);
   }
@@ -301,16 +313,17 @@
     var fl = Math.floor(e * 3) % 3, frR = (fl + 1) % 3;
     if (fl !== birdFrame) { birdFrame = fl; birdL.firstChild.style.backgroundPosition = (-FW * fl) + 'px 0'; birdR.firstChild.style.backgroundPosition = (-FW * frR) + 'px 0'; }
   }
-  function freezeBirds() { if (birdMode === 'walk') birdMode = 'frozen'; }
+  function freezeBirds() { setBirdMode('frozen'); }
   function dropBirds() {
-    birdMode = 'fallen';
+    if (!setBirdMode('fallen')) return;
     [birdL, birdR].forEach(function (b, i) {
       b.style.visibility = 'visible'; b.className = 'bird ' + (i ? 'fall-r' : 'fall-l');
       if (!P.classic) b.firstChild.style.backgroundPosition = (-FW * 3) + 'px 0';     // the flailing pose
     });
   }
   function crashBirds() {
-    birdMode = 'crash'; placeBirds(1); birdL.style.visibility = birdR.style.visibility = 'hidden';
+    if (!setBirdMode('crash')) return;
+    placeBirds(1); birdL.style.visibility = birdR.style.visibility = 'hidden';
     crash.className = 'show'; A.whistle(); A.play('crash');
     later(function () { crash.className = ''; dropBirds(); }, 380);
   }
@@ -480,6 +493,32 @@
     net.on(onNet); return net;
   }
   function lobbyMsg(t) { $('lobbyMsg').textContent = t || ''; }
+  function setLobbyForm(next) {
+    if (!M.apply('lobbyForm', lobbyForm, 'status', next).ok) return false;
+    paintLobbyButtons();
+    return true;
+  }
+  function paintLobbyButtons() {
+    var off = !N.Net.available() || lobbyForm.status === 'pending';
+    $('btnCreate').disabled = off; $('btnJoin').disabled = off;
+  }
+  var cdTipHtml = '';
+  function showLink(status) {
+    var lost = status === 'closed' || (status === 'connecting' && room);
+    if (!cdTipHtml && $('cdTip')) cdTipHtml = $('cdTip').innerHTML;
+    if (!lost) {
+      if (status === 'open') lobbyMsg('');
+      if ($('feedback').textContent === 'RECONNECTING...') setFeedback('');
+      if ($('cdTip').dataset.reconnect) { $('cdTip').innerHTML = cdTipHtml; delete $('cdTip').dataset.reconnect; }
+      return;
+    }
+    var msg = 'Connection lost - reconnecting...';
+    lobbyMsg(msg);
+    if (screenName === 'play') setFeedback('RECONNECTING...', 'time');
+    else if (screenName === 'countdown') { $('cdTip').textContent = msg; $('cdTip').dataset.reconnect = '1'; }
+    else if (screenName === 'intro') $('introInstr').textContent = msg;
+    else if (screenName === 'end') $('endThanks').textContent = msg;
+  }
   function openLobby() {
     A.unlock();
     setScreen('lobby', 'play');
@@ -502,8 +541,30 @@
         (p.id === myId ? ' <small>(you)</small>' : '') + (p.connected ? '' : ' <small>(reconnecting)</small>') + '</li>';
     }).join('');
     var host = room.hostId === myId, enough = room.players.filter(function (p) { return p.connected; }).length >= room.minPlayers;
-    $('btnStart').hidden = !host; $('btnStart').disabled = !enough || room.state !== 'lobby';
-    $('startHint').textContent = room.state !== 'lobby' ? 'Game in progress...' : host ? (enough ? 'Everyone here? Press start!' : 'Waiting for at least ' + room.minPlayers + ' players...') : 'Waiting for the host to start...';
+    $('btnStart').hidden = !host; $('btnStart').disabled = lobbyForm.status === 'pending' || !enough || room.state !== 'lobby';
+    $('startHint').textContent = room.state === 'finished' ? 'Game over.' : room.state !== 'lobby' ? 'Game in progress...' : host ? (enough ? 'Everyone here? Press start!' : 'Waiting for at least ' + room.minPlayers + ' players...') : 'Waiting for the host to start...';
+  }
+  // Land on the screen that matches the server's room state (join, rejoin, refresh).
+  function showRoom(rm) {
+    if (rm.state === 'lobby') {
+      if (screenName !== 'end') setScreen('lobby', 'play');
+      renderRoom();
+      return;
+    }
+    var g = newRemoteGame();
+    g.resume(rm);
+    if (rm.state === 'playing') {
+      onEvent({ type: 'progress', players: rm.players }, g);
+      if (rm.mine) { pending = rm.mine.buffer || ''; renderBox(); }
+    } else if (rm.state === 'reveal') {
+      renderPuzzle(g.currentPuzzle(), g.currentRound());
+      (rm.answers || []).forEach(function (a) { markWord(a.id, 'revealed'); });
+      resetBirds(); freezeBirds();
+      if (rm.standings) showStandings(rm.standings);
+      setFeedback('REJOINED - NEXT PUZZLE IN A MOMENT', 'time');
+    } else if (rm.state === 'finished') {
+      showEnd({ standings: rm.standings || [], multiplayer: true, maxScore: rm.maxScore });
+    }
   }
   function addChat(m) {
     var log = $('chatLog'), d = document.createElement('div');
@@ -520,31 +581,31 @@
       case '_auth':                         // password-gated server (private app): ask once, then connect
         $('keyMsg').textContent = m.reason === 'denied' ? 'That password did not work. Try again.' : 'This private game server needs the password.';
         lobbyMsg(m.reason === 'denied' ? 'Wrong password.' : 'Enter the password to play online.');
-        closeModals(); $('keyInput').value = ''; $('keyModal').hidden = false;
+        $('keyInput').value = ''; setModal('key');
         setTimeout(function () { try { $('keyInput').focus(); } catch (e) {} }, 50); break;
       case '_status':
-        if (m.status === 'closed' && room) { lobbyMsg('Connection lost - reconnecting...'); if (stage.dataset.screen === 'play') setFeedback('RECONNECTING...', 'time'); }
+        showLink(m.status);
         if (m.status === 'connecting' && !room) setTimeout(function () {   // hosted servers can be asleep
           if (net && net.status === 'connecting' && !room) lobbyMsg('Connecting to the game server... it can take up to a minute to wake up.');
         }, 1500);
-        if (m.status === 'open') lobbyMsg(''); break;
+        if (m.status === 'closed' || m.status === 'auth') setLobbyForm('idle');
+        break;
       case 'joined':
-        myId = m.you.id; room = m.room; lobbyMsg(''); A.play('join');
+        myId = m.you.id; room = m.room; lobbyMsg(''); setLobbyForm('idle'); A.play('join');
         $('chatLog').innerHTML = ''; room.chat.forEach(addChat);
-        if (room.state === 'lobby' || room.state === 'finished') { if (stage.dataset.screen !== 'end') setScreen('lobby', 'play'); renderRoom(); }
-        else { var g = newRemoteGame(); g.resume(room); if (room.state === 'playing') { onEvent({ type: 'progress', players: room.players }, g); if (room.mine) { pending = room.mine.buffer || ''; renderBox(); } }
-               else { setScreen('intro', 'back'); $('introTitle').textContent = 'REJOINING...'; } }
+        showRoom(room);
         history.replaceState(null, '', '?room=' + room.code + (params.get('fast') ? '&fast=1' : ''));
         break;
       case 'room':
-        room = m.room; renderRoom();
-        if (room.state === 'lobby' && ['end', 'play', 'countdown', 'intro'].indexOf(stage.dataset.screen) >= 0 && mode === 'multi') { game = null; A.themeStop(); setScreen('lobby', 'play'); }
-        if (stage.dataset.screen === 'end' && mode === 'multi') { var h = room.hostId === myId; $('btnToLobby').disabled = !h; $('btnToLobby').textContent = h ? 'BACK TO LOBBY' : 'WAITING FOR HOST'; }
+        room = m.room; if (room.state !== 'lobby') setLobbyForm('idle'); renderRoom();
+        if (room.state === 'lobby' && ['end', 'play', 'countdown', 'intro'].indexOf(screenName) >= 0 && mode === 'multi') { game = null; A.themeStop(); setScreen('lobby', 'play'); }
+        else if (room.state === 'finished' && screenName !== 'end' && mode === 'multi') showEnd({ standings: room.standings || [], multiplayer: true, maxScore: room.maxScore });
+        if (screenName === 'end' && mode === 'multi') { var h = room.hostId === myId; $('btnToLobby').disabled = !h; $('btnToLobby').textContent = h ? 'BACK TO LOBBY' : 'WAITING FOR HOST'; }
         break;
       case 'chat': addChat(m.msg); if (!m.msg.from && /joined|back/.test(m.msg.text)) A.play('join'); break;
-      case 'error': lobbyMsg(m.msg); if (stage.dataset.screen !== 'lobby') setFeedback(m.msg, 'bad'); break;
+      case 'error': setLobbyForm('idle'); lobbyMsg(m.msg); if (screenName !== 'lobby') setFeedback(m.msg, 'bad'); break;
       case 'left': room = null; myId = null; break;
-      case 'countdown': A.themeStop(); newRemoteGame().handle(m); break;
+      case 'countdown': setLobbyForm('idle'); A.themeStop(); newRemoteGame().handle(m); break;
       default: if (game && game.multiplayer) game.handle(m);
     }
   }
@@ -556,16 +617,18 @@
   }
 
   // ---------- modals ----------
-  function openModal(id) {
-    $(id).hidden = false;
-    if (id === 'scoresModal') renderScores();
-    if (id === 'settingsModal') { $('setSound').checked = S.sound; $('setTick').checked = S.tick; $('setMusic').checked = S.music; $('setMotion').checked = S.motion; $('setSpeed').value = String(S.speed); $('setNick').value = S.nick || ''; }
-    if (game && mode === 'solo' && game.phase !== 'finished' && !game.paused && stage.dataset.screen === 'play') togglePause();
+  var MODAL_IDS = { help: 'helpModal', settings: 'settingsModal', scores: 'scoresModal', key: 'keyModal' };
+  function setModal(name) {
+    var next = name || 'none', prev = modal.name;
+    if (next !== prev && !M.apply('modal', modal, 'name', next).ok) return;
+    Object.keys(MODAL_IDS).forEach(function (k) { $(MODAL_IDS[k]).hidden = k !== next; });
+    if (next === 'scores') renderScores();
+    if (next === 'settings') { $('setSound').checked = S.sound; $('setTick').checked = S.tick; $('setMusic').checked = S.music; $('setMotion').checked = S.motion; $('setSpeed').value = String(S.speed); $('setNick').value = S.nick || ''; }
+    if (next !== 'none' && prev === 'none' && game && mode === 'solo' && game.phase !== 'finished' && !game.paused && screenName === 'play') togglePause();
+    if (next === 'none') { if (game && game.paused) togglePause(); focusInput(); }
   }
-  function closeModals() {
-    document.querySelectorAll('.modal').forEach(function (m) { m.hidden = true; });
-    if (game && game.paused) togglePause(); focusInput();
-  }
+  function openModal(id) { setModal({ helpModal: 'help', settingsModal: 'settings', scoresModal: 'scores', keyModal: 'key' }[id]); }
+  function closeModals() { setModal(null); }
   function renderScores() {
     var l = getScores();
     $('scoreTable').innerHTML = l.length ? l.map(function (s, i) { return '<li><span class="rk">' + (i + 1) + '</span><span class="sc">' + s.score + '</span><span class="tt">' + esc(s.rank) + '</span><span class="dt">' + esc(s.date) + '</span></li>'; }).join('')
@@ -599,16 +662,21 @@
     $('btnToLobby').addEventListener('click', function () { if (net) net.send({ t: 'back' }); });
     // lobby
     $('btnLobbyBack').addEventListener('click', function () { setScreen('title', 'back'); });
-    $('btnCreate').addEventListener('click', function () { var n = nick(); if (!n) return; ensureNet().lastName = n; net.forget(); net.send({ t: 'create', name: n, fast: !!params.get('fast') }); });
+    $('btnCreate').addEventListener('click', function () {
+      var n = nick(); if (!n) return;
+      if (!setLobbyForm('pending')) return;
+      ensureNet().lastName = n; net.forget(); net.send({ t: 'create', name: n, fast: !!params.get('fast') });
+    });
     $('btnJoin').addEventListener('click', function () {
       var n = nick(); if (!n) return; var code = $('joinCode').value.trim().toUpperCase();
       if (!/^[A-Z]{4}$/.test(code)) { lobbyMsg('Room codes are 4 letters.'); return; }
+      if (!setLobbyForm('pending')) return;
       ensureNet().lastName = n;
       var tok = net.session && net.session.code === code ? net.session.token : undefined;
       net.send({ t: 'join', code: code, name: n, token: tok });
     });
     $('joinCode').addEventListener('keydown', function (e) { if (e.key === 'Enter') $('btnJoin').click(); });
-    $('btnStart').addEventListener('click', function () { net.send({ t: 'start' }); });
+    $('btnStart').addEventListener('click', function () { if (!setLobbyForm('pending')) return; net.send({ t: 'start' }); });
     $('btnLeave').addEventListener('click', function () { leaveRoom(); lobbyMsg('You left the room.'); });
     $('btnCopy').addEventListener('click', function () {
       var l = $('roomLink').dataset.link; try { navigator.clipboard.writeText(l); $('btnCopy').textContent = 'COPIED!'; } catch (e) {}

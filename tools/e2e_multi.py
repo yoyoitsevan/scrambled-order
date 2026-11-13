@@ -95,7 +95,17 @@ with sync_playwright() as p:
     assert stats['reloaded'] and stats['wrong'] == 1 and stats['bursts'] >= 12, stats
     assert {'board0', 'mpplay', 'r4'} <= shots, shots
     assert B.is_disabled('#btnToLobby')
-    A.click('#btnToLobby')
+    # refreshing on the final screen must bring the standings back, not a lobby nobody can leave.
+    # the crown passes while the socket is gone, so whoever is host now takes the room back.
+    A.reload(); A.wait_for_function("document.getElementById('stage').dataset.screen==='end'", timeout=15000)
+    A.wait_for_function("document.querySelectorAll('#finalList li').length===3", timeout=5000)
+    host = None
+    for _ in range(30):
+        host = next((pg for pg in pages if not pg.evaluate("document.getElementById('btnToLobby').disabled")), None)
+        if host: break
+        time.sleep(0.1)
+    assert host, 'nobody can take the room back to the lobby'
+    host.click('#btnToLobby')
     for pg in pages: pg.wait_for_function("document.getElementById('stage').dataset.screen==='lobby'", timeout=10000)
     C.click('#btnLeave'); A.wait_for_function("document.querySelectorAll('#playerList li').length===2")
     assert not errs, errs

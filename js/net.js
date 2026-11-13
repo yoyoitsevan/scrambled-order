@@ -5,9 +5,14 @@
    round trips). The server sends each puzzle with startsAt/endsAt, so every player reveals it at the
    same moment and counts down locally; typed letters carry their synced time so the server can judge
    them by when they were typed (within the player's measured latency). */
-(function () {
+(function (root, factory) {
+  var E = typeof module === 'object' && module.exports ? require('./engine') : root.OOOEngine;
+  var Machines = typeof module === 'object' && module.exports ? require('./machines') : root.OOOMachines;
+  var api = factory(root, E, Machines);
+  if (typeof module === 'object' && module.exports) module.exports = api;
+  else root.OOONet = api;
+})(typeof self !== 'undefined' ? self : this, function (root, E, Machines) {
   'use strict';
-  var E = window.OOOEngine;
 
   function Net() {
     this.ws = null; this.handlers = []; this.queue = []; this.offset = 0; this.closedByUser = false;
@@ -18,7 +23,7 @@
   // Inside the iOS/Android app (Capacitor) the page is served from the device, so multiplayer talks to
   // the hosted server named by the build profile (js/profile.js: appServer/appWeb). In a browser it stays
   // same-origin. window.OOO_SERVER overrides both (testing).
-  var PROF = window.OOO_PROFILE || {};
+  var PROF = root.OOO_PROFILE || {};
   var APP_WS = PROF.appServer || 'wss://scrambled-order.onrender.com/ws', APP_WEB = PROF.appWeb || 'https://scrambled-order.onrender.com/';
   // Password-gated servers (profile appKey: "<label>"): the app asks for the password once and keeps only
   // HMAC-SHA256(password, label), sent as a websocket subprotocol ("ooo", "k<hex>"); the server answers
@@ -33,8 +38,8 @@
   };
   function hmacHex(key, msg) {
     var enc = function (t) { return new TextEncoder().encode(t); };
-    var C = window.crypto && window.crypto.subtle;
-    if (C && window.isSecureContext !== false) {
+    var C = root.crypto && root.crypto.subtle;
+    if (C && root.isSecureContext !== false) {
       return C.importKey('raw', enc(key), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
         .then(function (k) { return C.sign('HMAC', k, enc(msg)); }).then(toHex)
         .catch(function () { return toHex(hmacSha256(enc(key), enc(msg))); });
@@ -84,8 +89,8 @@
     return sha256(op);
   }
   Net._hmacSha256 = hmacSha256;   // exposed for tests
-  Net.isApp = function () { var C = window.Capacitor; return !!(C && typeof C.isNativePlatform === 'function' && C.isNativePlatform()); };
-  Net.remote = function () { return window.OOO_SERVER || (Net.isApp() ? APP_WS : null); };
+  Net.isApp = function () { var C = root.Capacitor; return !!(C && typeof C.isNativePlatform === 'function' && C.isNativePlatform()); };
+  Net.remote = function () { return root.OOO_SERVER || (Net.isApp() ? APP_WS : null); };
   Net.available = function () { return 'WebSocket' in window && (!!Net.remote() || /^https?:$/.test(location.protocol)); };
   Net.shareBase = function () {   // base URL for "join my room" links (the app's own origin is not reachable by friends)
     if (Net.isApp()) return APP_WEB;
@@ -94,15 +99,21 @@
   Net.prototype.url = function () { return Net.remote() || ((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws'); };
   Net.prototype.on = function (fn) { this.handlers.push(fn); };
   Net.prototype._emit = function (m) { this.handlers.forEach(function (h) { h(m); }); };
+  Net.prototype._status = function (to) {
+    var r = Machines.apply('net', this, 'status', to);
+    return r.ok;
+  };
   Net.prototype.connect = function () {
     var self = this;
     if (this.ws && (this.ws.readyState === 0 || this.ws.readyState === 1)) return;
     var key = Net.needsKey() ? Net.getKey() : '';
-    if (Net.needsKey() && !key) { this.status = 'auth'; this._emit({ t: '_auth', reason: 'missing' }); return; }
-    this.closedByUser = false; this.status = 'connecting'; this._emit({ t: '_status', status: 'connecting' });
+    if (Net.needsKey() && !key) { this._status('auth'); this._emit({ t: '_auth', reason: 'missing' }); return; }
+    this.closedByUser = false;
+    if (!this._status('connecting')) return;
+    this._emit({ t: '_status', status: 'connecting' });
     var ws = this.ws = key ? new WebSocket(this.url(), ['ooo', 'k' + key]) : new WebSocket(this.url());
     ws.onopen = function () {
-      self.retry = 0; self.status = 'open'; self._emit({ t: '_status', status: 'open' });
+      self.retry = 0; self._status('open'); self._emit({ t: '_status', status: 'open' });
       self.ping(); setTimeout(function () { self.ping(); }, 400); setTimeout(function () { self.ping(); }, 1200);
       clearInterval(self._pingTimer); self._pingTimer = setInterval(function () { self.ping(); }, 4000);   // clock sync + keepalive
       if (self.session && self.session.token && self.wantRejoin) ws.send(JSON.stringify({ t: 'join', code: self.session.code, token: self.session.token, name: self.session.name }));
@@ -129,9 +140,9 @@
       self.opened = false; self.denied = false; clearInterval(self._pingTimer); self._pings = {};
       if (refused) {
         self.queue = (self.unconfirmed || []).concat(self.queue); self.unconfirmed = null;
-        Net.clearKey(); self.status = 'auth'; self._emit({ t: '_auth', reason: 'denied' }); return;
+        Net.clearKey(); self._status('auth'); self._emit({ t: '_auth', reason: 'denied' }); return;
       }
-      self.status = 'closed'; self._emit({ t: '_status', status: 'closed' });
+      self._status('closed'); self._emit({ t: '_status', status: 'closed' });
       if (self.closedByUser) return;
       var wait = Math.min(8000, 500 * Math.pow(2, self.retry++));
       setTimeout(function () { if (!self.closedByUser) self.connect(); }, wait);
@@ -162,7 +173,8 @@
   function RemoteGame(net, myId) {
     this.net = net; this.myId = myId; this.multiplayer = true;
     this.cfg = Object.assign({}, E.CONFIG, { pauseDuringFill: false });
-    this.listeners = []; this.phase = 'countdown'; this.score = 0; this.paused = false;
+    this.listeners = []; this.phase = 'countdown';   // remoteInitial: a fresh seat waits for the server, then jumps (js/machines.js phase)
+    this.score = 0; this.paused = false;
     this.timeLeft = 0; this.timeTotal = 1; this.endsAt = 0; this._lastSec = null;
     this.round = null; this.puzzle = null; this.puzzleIdx = 0; this.myStatus = 'idle'; this.players = [];
     this.lastResult = null; this.cdEndsAt = 0; this._reveal = null;
@@ -171,6 +183,16 @@
   // Local mirror of the server's point freeze: the synced time the first letter of each answer was typed.
   RemoteGame.prototype._resetTyping = function () { this._buf = 0; this._bufStart = null; this._chunks = []; };
   RemoteGame.prototype._clearHints = function () { this._hints.forEach(clearTimeout); this._hints = []; };
+  RemoteGame.prototype._phase = function (to) { return Machines.apply('phase', this, 'phase', to).ok; };
+  // A step this client takes itself (solved / wrong / next puzzle). Illegal moves are ignored.
+  RemoteGame.prototype._seat = function (to) { return Machines.apply('player', this, 'myStatus', to).ok; };
+  // The server's status on a snapshot or progress message. It is already a decided state.
+  RemoteGame.prototype._adopt = function (to) {
+    if (to == null || !Machines.known('player', to)) return false;
+    if (to === 'playing' && this.phase !== 'playing') return false;   // next puzzle's roster arrived before the card
+    Machines.adopt('player', this, 'myStatus', to);
+    return true;
+  };
   // What the next word is worth right now (same server clock and formula as the server's award).
   RemoteGame.prototype.pointsNow = function () {
     var p = this.puzzle; if (this.phase !== 'playing' || !p || this.myStatus !== 'playing') return null;
@@ -233,45 +255,51 @@
     this._showPuzzle(m);
   };
   RemoteGame.prototype._showPuzzle = function (m) {
+    if (!Machines.allows('phase', this.phase, 'playing')) return;
     this.round = m.round; this.puzzleIdx = m.index; this._clearHints(); this._resetTyping();
     var p = m.puzzle; p.targets.forEach(function (t) { t.solved = false; t.revealed = false; t.answer = null; });
     p.title = m.round.title; this.puzzle = p;
+    if (!this._phase('playing')) return;
     this.timeTotal = m.durationMs; this.endsAt = m.endsAt; this.timeLeft = m.endsAt - this.net.serverNow();
-    this.phase = 'playing'; this.myStatus = 'playing'; this._lastSec = Math.ceil(this.timeLeft / 1000);
+    this._seat('playing'); this._lastSec = Math.ceil(this.timeLeft / 1000);
     this._emit('puzzle', { puzzle: p, index: m.index, count: m.round.count });
   };
   RemoteGame.prototype.handle = function (m) {
     var self = this;
     switch (m.t) {
-      case 'countdown': this.phase = 'countdown'; this.cdEndsAt = m.endsAt; this._lastSec = null; this.tick(); break;
-      case 'roundIntro': this.phase = 'roundIntro'; this.round = { round: m.round, title: m.title, category: m.category, instruction: m.instruction };
+      case 'countdown': this._phase('countdown'); this.cdEndsAt = m.endsAt; this._lastSec = null; this.tick(); break;
+      case 'roundIntro':
+        if (!this._phase('roundIntro')) break;
+        this.round = { round: m.round, title: m.title, category: m.category, instruction: m.instruction };
         this._emit('roundIntro', m); break;
       case 'puzzle': this._setPuzzle(m); break;
       case 'solved': {
         var t = this.puzzle && this.puzzle.targets[m.targetId]; if (!t) break;
         t.solved = true; t.answer = m.answer; this.score = m.score; this._chunks.shift();
-        if (m.last) this.myStatus = 'done';
+        if (m.last) this._seat('done');
         this._emit('solved', { target: t, typed: 3, points: m.points, score: m.score, last: m.last, fillMs: (t.answer.length - 3) * this.cfg.letterMs });
         if (m.last) this._emit('puzzleSolved', {});
         break; }
       case 'reveal': this._hint(m); break;
       case 'skipped': this._chunks.shift(); this._emit('skipped', { chunk: m.chunk }); break;
-      case 'wrong': this.myStatus = 'out'; this._resetTyping(); this._emit('wrong', { chunk: m.chunk, reveal: [], waitForEnd: true }); break;
+      case 'wrong': this._seat('out'); this._resetTyping(); this._emit('wrong', { chunk: m.chunk, reveal: [], waitForEnd: true }); break;
       case 'progress': this.players = m.players;
-        var me = m.players.filter(function (p) { return p.id === self.myId; })[0]; if (me) this.score = me.score;
+        var me = m.players.filter(function (p) { return p.id === self.myId; })[0];
+        if (me) { this.score = me.score; this._adopt(me.status); }
         this._emit('progress', { players: m.players }); break;
       case 'puzzleEnd': {
         if (this._reveal) { clearTimeout(this._reveal); this._reveal = null; }
         this._clearHints();
         var wasPlaying = this.myStatus === 'playing';
         if (this.puzzle) m.answers.forEach(function (a) { var t = self.puzzle.targets[a.id]; if (t) t.answer = a.answer; });
-        this.phase = 'feedback'; if (wasPlaying) this.myStatus = m.reason === 'time' ? 'timeout' : 'out';
+        if (!this._phase('feedback')) break;
+        if (wasPlaying) this._seat(m.reason === 'time' ? 'timeout' : 'out');
         this.timeLeft = m.reason === 'time' ? 0 : this.timeLeft;
         var rev = this.puzzle ? this.puzzle.targets.filter(function (t) { return !t.solved && !t.revealed; }).map(function (t) { return t.id; }) : [];
         if (wasPlaying && m.reason === 'time') this._emit('timeout', { reveal: rev, multiplayer: true });
         this._emit('puzzleEnd', { reason: m.reason, reveal: rev, standings: m.standings, results: m.results, revealMs: m.revealMs, last: m.last });
         break; }
-      case 'finished': this.phase = 'finished'; this._emit('finished', { standings: m.standings, multiplayer: true, maxScore: m.maxScore }); break;
+      case 'finished': if (!this._phase('finished')) break; this._emit('finished', { standings: m.standings, multiplayer: true, maxScore: m.maxScore }); break;
     }
   };
   // Rejoining mid-game: rebuild the current puzzle from the room snapshot.
@@ -281,14 +309,26 @@
       this._showPuzzle({ round: room.round, index: room.puzzleIndex, puzzle: room.puzzle, durationMs: room.durationMs, endsAt: room.endsAt });
       var mine = room.mine;
       if (mine) {
-        mine.solved.forEach(function (s) { var t = self.puzzle.targets[s.id]; t.solved = true; t.answer = s.answer; self._emit('restored', { target: t }); });
-        this.myStatus = mine.status;
+        mine.solved.forEach(function (s) { var t = self.puzzle.targets[s.id]; if (!t) return; t.solved = true; t.answer = s.answer; self._emit('restored', { target: t }); });
+        this._adopt(mine.status);
       }
       (room.reveals || []).forEach(function (r) { self._hint(r); });
-    } else if (room.round) { this.round = room.round; this.phase = room.state === 'intro' ? 'roundIntro' : room.state === 'reveal' ? 'feedback' : this.phase; }
+    } else if (room.state === 'countdown') {
+      this._phase('countdown'); this.cdEndsAt = room.countdownEndsAt || 0; this._lastSec = null; this.tick();
+    } else if (room.state === 'intro' && room.round) {
+      if (this._phase('roundIntro')) { this.round = room.round; this._emit('roundIntro', room.round); }
+    } else if (room.state === 'reveal' && room.puzzle) {
+      if (this._phase('feedback')) {
+        this.round = room.round; this.puzzleIdx = room.puzzleIndex || 0;
+        var answers = {};
+        (room.answers || []).forEach(function (a) { answers[a.id] = a.answer; });
+        room.puzzle.targets.forEach(function (t) { t.solved = false; t.revealed = true; t.answer = answers[t.id] || null; });
+        this.puzzle = room.puzzle; this.timeTotal = room.durationMs || 1; this.timeLeft = 0; this._adopt('out');
+      }
+    } else if (room.state === 'finished') { this._phase('finished'); }
     var me = room.players.filter(function (p) { return p.id === self.myId; })[0]; if (me) this.score = me.score;
     this.players = room.players;
   };
 
-  window.OOONet = { Net: Net, RemoteGame: RemoteGame };
-})();
+  return { Net: Net, RemoteGame: RemoteGame };
+});
